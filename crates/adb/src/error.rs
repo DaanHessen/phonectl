@@ -28,6 +28,9 @@ pub enum Error {
     #[error("tls error: {0}")]
     Tls(String),
 
+    #[error("pairing failed: wrong code, or the phone is no longer showing the pairing dialog")]
+    PairingRejected,
+
     #[error("the connection to the device is closed")]
     ConnectionClosed,
 

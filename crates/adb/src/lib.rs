@@ -7,6 +7,8 @@
 pub mod auth;
 pub mod error;
 pub mod message;
+pub mod pairing;
+pub mod spake2;
 pub mod tls;
 pub mod transport;
 

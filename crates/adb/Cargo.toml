@@ -9,11 +9,16 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+aes-gcm.workspace = true
 base64.workspace = true
+curve25519-dalek.workspace = true
+hkdf.workspace = true
 rand.workspace = true
 rcgen.workspace = true
 rsa.workspace = true
 rustls.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 tokio-rustls.workspace = true
 sha1.workspace = true
 thiserror.workspace = true
