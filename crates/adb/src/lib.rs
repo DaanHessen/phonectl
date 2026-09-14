@@ -5,6 +5,7 @@
 //! nothing about what runs on top of the streams it opens.
 
 pub mod auth;
+pub mod discovery;
 pub mod error;
 pub mod message;
 pub mod pairing;

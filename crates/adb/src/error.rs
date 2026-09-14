@@ -25,6 +25,12 @@ pub enum Error {
     #[error("protocol error: {0}")]
     Protocol(String),
 
+    #[error("discovery error: {0}")]
+    Discovery(String),
+
+    #[error("no matching device found")]
+    NotFound,
+
     #[error("tls error: {0}")]
     Tls(String),
 
