@@ -22,6 +22,18 @@ pub enum Error {
     #[error("key error: {0}")]
     Key(String),
 
+    #[error("protocol error: {0}")]
+    Protocol(String),
+
+    #[error("tls error: {0}")]
+    Tls(String),
+
+    #[error("the connection to the device is closed")]
+    ConnectionClosed,
+
+    #[error("the device refused to open the service")]
+    ServiceRefused,
+
     #[error("unexpected {got:?} message while waiting for {expected}")]
     Unexpected { got: Command, expected: &'static str },
 }

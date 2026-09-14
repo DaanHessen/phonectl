@@ -11,7 +11,10 @@ publish = false
 [dependencies]
 base64.workspace = true
 rand.workspace = true
+rcgen.workspace = true
 rsa.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
 sha1.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

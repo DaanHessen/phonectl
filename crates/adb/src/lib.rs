@@ -7,7 +7,10 @@
 pub mod auth;
 pub mod error;
 pub mod message;
+pub mod tls;
+pub mod transport;
 
 pub use auth::HostKey;
 pub use error::Error;
 pub use message::{Command, Header, Message};
+pub use transport::{Banner, Connection, Negotiated, Stream, negotiate};

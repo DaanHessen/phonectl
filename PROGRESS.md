@@ -31,8 +31,20 @@ section.
         hidden registerAsSystemService works (STATUS_BAR_SERVICE)
   - [ ] Glyph light write test (needs Daan's OK before touching the lights)
   - [ ] ADB auto-reconnect behaviour after Wi-Fi drop / phone reboot
-- [ ] Phase 3: architecture doc + synthesis report
-- [ ] Phase 4+: implementation
+- [x] Phase 3: architecture doc (`docs/architecture.md`) + report
+      (`docs/research/REPORT.md`)
+- [~] Phase 4: implementation
+  - [x] `adb` crate: message codec, host key + Android pubkey encoding
+        (cross-checked byte-for-byte against `adb pubkey`), CNXN/AUTH/STLS
+        handshake, stream multiplexing with OKAY flow control, TLS 1.3 client
+  - [ ] pairing (SPAKE2)
+  - [ ] mDNS discovery
+  - [ ] first live connection to the phone without the adb binary
+  - [ ] agent (`agent/`, build.sh works; only GlyphProbe so far)
+  - [ ] daemon, IPC, CLI, Waybar
+
+Decisions taken (2026-09-14): name **phonectl**, licence MIT, Glyph write test
+approved by Daan (not yet run: the phone dropped off ADB first).
 
 ## Key findings so far
 

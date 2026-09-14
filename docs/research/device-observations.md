@@ -32,6 +32,11 @@ not decoded.
   advertised even with wireless debugging on. Avahi also saw nothing, so this
   is how the phone behaves, not a discovery bug. Needs rechecking: does the phone only
   advertise once a paired host exists?
+- **Wireless debugging switched itself off** about 40 minutes after pairing,
+  with the phone still on the same Wi-Fi and pingable: no `_adb-tls-connect`
+  advert and no device in `adb devices`. Whether the trigger is idle time,
+  screen off, or the laptop's adb server restarting is not yet known. This is
+  the central reliability question for automatic reconnection.
 - `settings global adb_wifi_enabled=1`, `adb_enabled=0` (USB debugging off).
 
 ## Shell (uid 2000) capabilities that matter
