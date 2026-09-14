@@ -1,0 +1,24 @@
+[package]
+name = "adb"
+description = "Async Android Debug Bridge client: wire protocol, TLS, pairing, discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+base64.workspace = true
+rand.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
