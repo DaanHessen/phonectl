@@ -31,6 +31,9 @@ pub enum Error {
     #[error("no matching device found")]
     NotFound,
 
+    #[error("the phone has not authorised this computer")]
+    Unauthorized,
+
     #[error("tls error: {0}")]
     Tls(String),
 
