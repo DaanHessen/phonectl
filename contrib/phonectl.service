@@ -1,0 +1,15 @@
+[Unit]
+Description=phonectl: phone link (Tailscale, Bluetooth fallback)
+Documentation=file://%h/Projects/code/private/tools/phonectl/README.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/phonectl daemon
+Restart=on-failure
+RestartSec=5s
+Environment=PHONECTL_LOG=info
+
+[Install]
+WantedBy=graphical-session.target
