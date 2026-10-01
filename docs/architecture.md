@@ -1,3 +1,9 @@
+> **Superseded (2026-10-01).** This ADB + shell-agent design cannot work off
+> Wi-Fi (wireless debugging is Wi-Fi only) and conflicts with apps that refuse
+> to run while debugging is on. phonectl is now an Android app talking to the
+> laptop daemon over Tailscale, with Bluetooth as fallback; see README.md.
+> Kept for the research it records.
+
 # Architecture
 
 Status: draft 1, 2026-09-14. Built on `docs/research/REPORT.md`; every major

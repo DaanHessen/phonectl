@@ -17,7 +17,24 @@ section.
   (`phonectl` is a working name).
 - Subagents: Sonnet or Haiku only.
 
-## Phase status
+## 2026-10-01: direction change
+
+Wireless debugging only exists on Wi-Fi (Android switches it off when Wi-Fi
+drops or changes, seen twice on this phone), so the ADB + shell-agent design
+cannot reach the phone on 5G or another network. Also Daan's payment app
+refuses to run while debugging is on. phonectl is now an Android app + laptop
+daemon over Tailscale (Bluetooth fallback); ADB is setup-only. See README.md
+and docs/architecture.md. The shell-agent notes below stay as research.
+
+Done and tested on the real devices: Tailscale link + reconnect (daemon
+restart, app restart/update, Wi-Fi ↔ 5G), clipboard both ways (incl. the
+automatic phone path), notifications (post, update, remove, icons), call →
+pause/resume Spotify, Waybar module, phone panel, over-the-link updates.
+
+Not yet tested: Bluetooth fallback (phone and laptop not BT-paired yet),
+laptop suspend/resume and laptop network change, multi-day battery numbers.
+
+## Phase status (ADB design, superseded)
 
 - [x] Phase 0: repo inspection (earctl, sonyctl, lumend, waybar config)
 - [x] Phase 1: research tracks (docs/research/*.md)
