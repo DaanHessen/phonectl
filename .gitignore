@@ -1,3 +1,6 @@
 /target
 /agent/build
 *.swp
+
+# Raw device dumps: personal data, never publish
+/docs/research/device/

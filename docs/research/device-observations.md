@@ -1,7 +1,7 @@
 # Device observations
 
 Everything here was observed on the real phone over wireless debugging on
-2026-09-14. Raw dumps sit next to this file in `device/`.
+2026-09-14. Raw dumps were kept locally (not published: they contain personal data).
 
 ## Identity
 
