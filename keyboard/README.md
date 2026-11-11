@@ -46,21 +46,26 @@ What the patch changes (`patches/0001-phonectl-bridge.patch`):
   (`phonectl_look`), the look and size prefs are reset once so existing
   installs get these defaults. Languages and other prefs are kept.
 
-* Emoji search (version 4.2.5). HeliBoard 4.2 already has the emoji search
-  (search key in the emoji panel's bottom row, search field above the
-  keyboard) and emoji suggestions in the strip, but both stay off until the
-  user downloads an emoji dictionary, so the search key was not shown. We
-  reuse all of it and bundle the HeliBoard emoji dictionaries for English and
-  Dutch (`assets/dicts/emoji_en.dict`, `emoji_nl.dict`, copied into the build
-  by `build.sh`). The search looks in the current language's dictionary plus
-  English and Dutch together, so "heart", "laugh", "hart" and "lachen" all
-  work. Data: CLDR emoji annotations (names and keywords) and Signal's emoji
-  keywords, compiled by Helium314 into
+* Emoji search (version 4.2.6), inside the keyboard like Gboard. HeliBoard's
+  own search is a separate activity that hides the keyboard and hands the
+  emoji back after its exit transition (about a second), so the search key
+  now starts `InlineEmojiSearch.kt` instead: the strip grows to two rows (a
+  search field and a row of matching emojis; recent emojis when the field
+  is empty), the letter keys type into the field (nothing reaches the app,
+  swipe typing is off), and tapping an emoji commits it straight to the
+  app's field while the keyboard stays open. The emoji key, the field's
+  close button, or leaving the field ends the search; the query lives in
+  memory only. Matching uses the bundled CLDR emoji dictionaries for the
+  current language plus English and Dutch (`assets/dicts/emoji_en.dict`,
+  `emoji_nl.dict`, copied into the build by `build.sh`), so "heart", "laugh",
+  "hart" and "lachen" all work. Lookups run on a worker thread. The insert
+  time is logged (`emoji search insert took N ms`, tag LatinIME). Data: CLDR
+  emoji annotations and Signal's emoji keywords, compiled by Helium314 into
   <https://codeberg.org/Helium314/aosp-dictionaries> (`emoji_cldr_signal_dictionaries`).
   Licences: Unicode License v3 (CLDR) and AGPL-3.0 (Signal); both are
   compatible with GPL-3.0.
-* Vibrate on keypress is on by default (system default duration). The first
-  update to 4.2.5 turns it on once (`phonectl_haptics`); it never turns it off.
+* Vibrate on keypress is on by default (system default duration) for fresh
+  installs. Updates leave the existing vibrate setting and duration as they are.
 * Suggestion strip: the right edge reserves the width of the toolbar key on
   the left, so suggestions are centred; the clipboard chip centres its text
   between the left padding and the close button.

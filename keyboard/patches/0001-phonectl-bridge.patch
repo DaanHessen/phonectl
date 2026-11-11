@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 0d4dcaf..f6230cd 100755
+index 0d4dcaf..225ceb1 100755
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,14 +10,14 @@ android {
@@ -12,8 +12,8 @@ index 0d4dcaf..f6230cd 100755
          targetSdk = 37
 -        versionCode = 4201
 -        versionName = "4.2"
-+        versionCode = 4205
-+        versionName = "4.2.5"
++        versionCode = 4206
++        versionName = "4.2.6"
          ndk {
              abiFilters.clear()
 -            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -76,6 +76,21 @@ index d50a3c9..ed02c2f 100644
                  android:permission="android.permission.BIND_INPUT_METHOD"
                  android:directBootAware="true"
                  android:exported="true">
+diff --git a/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java b/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java
+index 13d1bab..323fee0 100644
+--- a/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java
++++ b/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java
+@@ -202,6 +202,10 @@ public final class KeyboardSwitcher {
+         mState.onResetKeyboardStateToAlphabet(mLatinIME.getCurrentAutoCapsState(), mLatinIME.getCurrentRecapitalizeState());
+     }
+ 
++    public void resetKeyboardStateToAlphabetWithoutAutoCaps() {
++        mState.onResetKeyboardStateToAlphabet(0, null);
++    }
++
+     public void onPressKey(int code, int pointerCount, int currentAutoCapsState,
+             @Nullable RecapitalizeMode currentRecapitalizeState) {
+         mState.onPressKey(code, pointerCount, currentAutoCapsState, currentRecapitalizeState);
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
 index 33a9426..5f16cf1 100644
 --- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
@@ -161,24 +176,339 @@ index 33a9426..5f16cf1 100644
          }
      }
  }
+diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
+new file mode 100644
+index 0000000..f64e660
+--- /dev/null
++++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
+@@ -0,0 +1,310 @@
++// SPDX-License-Identifier: GPL-3.0-only
++package helium314.keyboard.keyboard.emoji
++
++import android.animation.ValueAnimator
++import android.content.Context
++import android.graphics.Typeface
++import android.graphics.drawable.GradientDrawable
++import android.graphics.drawable.StateListDrawable
++import android.os.Handler
++import android.os.Looper
++import android.util.TypedValue
++import android.view.Gravity
++import android.view.View
++import android.view.ViewGroup
++import android.widget.FrameLayout
++import android.widget.HorizontalScrollView
++import android.widget.ImageView
++import android.widget.LinearLayout
++import android.widget.TextView
++import helium314.keyboard.event.Event
++import helium314.keyboard.keyboard.KeyboardSwitcher
++import helium314.keyboard.keyboard.internal.KeyboardIconsSet
++import helium314.keyboard.keyboard.internal.keyboard_parser.floris.KeyCode
++import helium314.keyboard.keyboard.internal.keyboard_parser.getEmojiDefaultVersion
++import helium314.keyboard.latin.R
++import helium314.keyboard.latin.RichInputMethodManager
++import helium314.keyboard.latin.SingleDictionaryFacilitator
++import helium314.keyboard.latin.common.ColorType
++import helium314.keyboard.latin.common.splitOnWhitespace
++import helium314.keyboard.latin.dictionary.DictionaryFactory
++import helium314.keyboard.latin.settings.Settings
++import helium314.keyboard.latin.utils.DictionaryInfoUtils
++import java.util.concurrent.Executors
++
++/**
++ * Gboard-like emoji search inside the keyboard: a search field above a row of matching emojis. The letter keys of
++ * the keyboard type into the field (nothing reaches the app), tapping an emoji inserts it and the keyboard stays open.
++ * The query is kept in memory only and dropped when the search ends.
++ */
++object InlineEmojiSearch {
++    private const val MAX_RESULTS = 40
++
++    private val main = Handler(Looper.getMainLooper())
++    private val worker = Executors.newSingleThreadExecutor { Thread(it, "emoji-search").apply { isDaemon = true } }
++    private val query = StringBuilder()
++    private var root: LinearLayout? = null
++    private var container: FrameLayout? = null
++    private var originalHeight = 0
++    private var queryView: TextView? = null
++    private var caret: View? = null
++    private var caretAnimator: ValueAnimator? = null
++    private var results: LinearLayout? = null
++    private var resultsScroll: HorizontalScrollView? = null
++    private var onPick: ((String) -> Unit)? = null
++    private var generation = 0
++
++    @Volatile private var facilitators: List<SingleDictionaryFacilitator> = emptyList()
++    private var facilitatorKey: List<String> = emptyList()
++
++    @JvmStatic
++    val isActive: Boolean get() = root != null
++
++    @JvmStatic
++    fun start(context: Context, strip: FrameLayout, pick: (String) -> Unit, close: () -> Unit) {
++        if (root != null) stop()
++        onPick = pick
++        query.setLength(0)
++        container = strip
++        val density = context.resources.displayMetrics.density
++        val colors = Settings.getValues().mColors
++        val rowHeight = context.resources.getDimensionPixelSize(R.dimen.config_suggestions_strip_height)
++
++        val fieldBackground = GradientDrawable().apply {
++            cornerRadius = 500f * density
++            setColor(colors.get(ColorType.EMOJI_SEARCH_BACKGROUND))
++        }
++        val textColor = colors.get(ColorType.EMOJI_SEARCH_TEXT)
++        val hintColor = (textColor and 0x00ffffff) or (0x80 shl 24)
++
++        val icon = ImageView(context).apply {
++            setImageDrawable(KeyboardIconsSet.instance.getNewDrawable(KeyboardIconsSet.NAME_SEARCH_KEY, context))
++            colorFilter = android.graphics.PorterDuffColorFilter(hintColor, android.graphics.PorterDuff.Mode.SRC_IN)
++        }
++        val text = TextView(context).apply {
++            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
++            setTextColor(textColor)
++            setHintTextColor(hintColor)
++            hint = context.getString(R.string.search_field_placeholder)
++            maxLines = 1
++            ellipsize = android.text.TextUtils.TruncateAt.START
++            gravity = Gravity.CENTER_VERTICAL
++            includeFontPadding = false
++        }
++        queryView = text
++        val caretView = View(context).apply { setBackgroundColor(textColor) }
++        caret = caretView
++        val clear = ImageView(context).apply {
++            setImageResource(R.drawable.ic_close)
++            colorFilter = android.graphics.PorterDuffColorFilter(textColor, android.graphics.PorterDuff.Mode.SRC_IN)
++            scaleType = ImageView.ScaleType.CENTER_INSIDE
++            contentDescription = context.getString(android.R.string.cancel)
++            setOnClickListener { close() }
++        }
++
++        val field = LinearLayout(context).apply {
++            orientation = LinearLayout.HORIZONTAL
++            gravity = Gravity.CENTER_VERTICAL
++            background = fieldBackground
++            addView(icon, LinearLayout.LayoutParams((20 * density).toInt(), (20 * density).toInt()).apply {
++                marginStart = (14 * density).toInt()
++                marginEnd = (8 * density).toInt()
++            })
++            addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++            addView(caretView, LinearLayout.LayoutParams((2 * density).toInt(), (20 * density).toInt()).apply {
++                marginStart = (1 * density).toInt()
++            })
++            addView(clear, LinearLayout.LayoutParams((40 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
++        }
++        val fieldRow = FrameLayout(context).apply {
++            addView(field, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (rowHeight - 12 * density).toInt(),
++                Gravity.CENTER_VERTICAL).apply {
++                marginStart = (8 * density).toInt()
++                marginEnd = (8 * density).toInt()
++            })
++        }
++
++        val list = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
++        results = list
++        val scroll = HorizontalScrollView(context).apply {
++            isHorizontalScrollBarEnabled = false
++            overScrollMode = View.OVER_SCROLL_NEVER
++            addView(list, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
++        }
++        resultsScroll = scroll
++
++        val rootView = LinearLayout(context).apply {
++            orientation = LinearLayout.VERTICAL
++            isClickable = true
++            colors.setBackground(this, ColorType.STRIP_BACKGROUND)
++            addView(fieldRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
++            addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
++        }
++        root = rootView
++
++        originalHeight = strip.layoutParams.height
++        strip.layoutParams = strip.layoutParams.apply { height = rowHeight * 2 }
++        strip.visibility = View.VISIBLE
++        strip.addView(rootView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++
++        caretAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
++            duration = 530
++            repeatMode = ValueAnimator.REVERSE
++            repeatCount = ValueAnimator.INFINITE
++            addUpdateListener { caretView.alpha = if ((it.animatedValue as Float) > 0.5f) 1f else 0f }
++            start()
++        }
++        refreshQuery()
++        warmUp(context)
++    }
++
++    @JvmStatic
++    fun stop() {
++        generation++
++        caretAnimator?.cancel()
++        caretAnimator = null
++        val rootView = root ?: return
++        (rootView.parent as? ViewGroup)?.removeView(rootView)
++        container?.let { c ->
++            c.layoutParams = c.layoutParams.apply { height = originalHeight }
++        }
++        root = null
++        container = null
++        queryView = null
++        caret = null
++        results = null
++        resultsScroll = null
++        onPick = null
++        query.setLength(0)
++    }
++
++    /** Returns true if the keyboard switcher should also see the event (shift, layout switches, and so on). */
++    @JvmStatic
++    fun onEvent(event: Event): Boolean {
++        val code = event.keyCode
++        when {
++            code == KeyCode.DELETE -> {
++                if (query.isNotEmpty()) {
++                    query.setLength(query.offsetByCodePoints(query.length, -1))
++                    queryChanged()
++                }
++                return false
++            }
++            code == KeyCode.EMOJI -> {
++                stop()
++                return true
++            }
++            code == KeyCode.SHIFT || code == KeyCode.ALPHA || code == KeyCode.SYMBOL || code == KeyCode.SYMBOL_ALPHA -> return true
++            event.codePoint >= 0 && event.metaState == 0 -> {
++                if (event.codePoint != '\n'.code) appendText(String(Character.toChars(event.codePoint)))
++                return true
++            }
++        }
++        return false
++    }
++
++    @JvmStatic
++    fun onText(text: String) = appendText(text)
++
++    private fun appendText(text: String) {
++        if (query.length >= 40) return
++        query.append(text.lowercase())
++        queryChanged()
++    }
++
++    private fun queryChanged() {
++        refreshQuery()
++    }
++
++    private fun refreshQuery() {
++        queryView?.text = query.toString()
++        if (query.isBlank()) {
++            generation++
++            showResults(RecentEmojis.get())
++        } else search(query.toString())
++    }
++
++    private fun warmUp(context: Context) {
++        worker.execute { runCatching { initFacilitators(context.applicationContext) } }
++    }
++
++    private fun search(text: String) {
++        val gen = ++generation
++        val context = root?.context?.applicationContext ?: return
++        worker.execute {
++            if (gen != generation) return@execute
++            val found = runCatching {
++                initFacilitators(context)
++                if (KeyboardSwitcher.getInstance().keyboard == null) emptyList()
++                else lookup(text)
++            }.getOrDefault(emptyList())
++            main.post { if (gen == generation) showResults(found) }
++        }
++    }
++
++    private fun lookup(text: String): List<String> {
++        val words = text.splitOnWhitespace()
++        if (words.isEmpty()) return emptyList()
++        val found = LinkedHashMap<String, Int>()
++        facilitators.forEach { facilitator ->
++            facilitator.getSuggestions(words).filter { it.isEmoji }.forEach { info ->
++                val emoji = getEmojiDefaultVersion(info.word)
++                if (info.mScore > (found[emoji] ?: Int.MIN_VALUE)) found[emoji] = info.mScore
++            }
++        }
++        return found.entries.sortedByDescending { it.value }.map { it.key }.take(MAX_RESULTS)
++    }
++
++    @Synchronized
++    private fun initFacilitators(context: Context) {
++        val current = RichInputMethodManager.getInstance().currentSubtype.locale
++        val locales = listOf(current, java.util.Locale.ENGLISH, java.util.Locale("nl"))
++        val files = locales.mapNotNull { l -> DictionaryInfoUtils.getOrExtractEmojiDict(l, context)?.let { l to it } }
++            .distinctBy { it.second.path }
++        val key = files.map { it.second.path }
++        if (key == facilitatorKey && facilitators.isNotEmpty()) return
++        closeDictionaries()
++        facilitators = files.mapNotNull { (l, f) -> DictionaryFactory.getDictionary(f, l)?.let { SingleDictionaryFacilitator(it) } }
++        facilitatorKey = key
++    }
++
++    @JvmStatic
++    @Synchronized
++    fun closeDictionaries() {
++        facilitators.forEach { it.closeDictionaries() }
++        facilitators = emptyList()
++        facilitatorKey = emptyList()
++    }
++
++    private fun showResults(emojis: List<String>) {
++        val list = results ?: return
++        val context = list.context
++        val density = context.resources.displayMetrics.density
++        val colors = Settings.getValues().mColors
++        list.removeAllViews()
++        resultsScroll?.scrollTo(0, 0)
++        emojis.forEach { emoji ->
++            val cell = TextView(context).apply {
++                text = emoji
++                setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
++                typeface = Typeface.DEFAULT
++                gravity = Gravity.CENTER
++                includeFontPadding = false
++                background = StateListDrawable().apply {
++                    addState(intArrayOf(android.R.attr.state_pressed), GradientDrawable().apply {
++                        cornerRadius = 8 * density
++                        setColor(colors.get(ColorType.EMOJI_SEARCH_BACKGROUND))
++                    })
++                }
++                setOnClickListener {
++                    RecentEmojis.add(emoji)
++                    onPick?.invoke(emoji)
++                }
++                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
++            }
++            list.addView(cell, LinearLayout.LayoutParams((46 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT).apply {
++                marginStart = (2 * density).toInt()
++            })
++        }
++    }
++}
 diff --git a/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt b/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
-index 3edca41..43dedb9 100644
+index 3edca41..09ce8a6 100644
 --- a/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
 +++ b/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
-@@ -86,9 +86,11 @@ private object AppUpgrade {
+@@ -86,9 +86,10 @@ private object AppUpgrade {
          val oldVersion = prefs.getInt(Settings.PREF_VERSION_CODE, 0)
          if (oldVersion == 0) {
              // fresh install -> no need to upgrade, as this does things like keeping old defaults which is on wanted on actual upgrade
 -            prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE) }
-+            prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE).putInt(PHONECTL_LOOK_PREF, PHONECTL_LOOK).putBoolean("phonectl_haptics", true) }
++            prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE).putInt(PHONECTL_LOOK_PREF, PHONECTL_LOOK) }
              return
          }
 +        applyPhonectlLook(prefs)
-+        applyPhonectlHaptics(prefs)
          // clear extracted dictionaries, in case updated version contains newer ones
          DictionaryInfoUtils.getCacheDirectories(context).forEach {
              for (file in it.listFiles()!!) {
-@@ -713,6 +715,31 @@ private object AppUpgrade {
+@@ -713,6 +714,25 @@ private object AppUpgrade {
          prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE) }
      }
  
@@ -201,12 +531,6 @@ index 3edca41..43dedb9 100644
 +        }
 +    }
 +
-+    // Once: switch vibrate on keypress on (it is on by default now); an install that has it on stays on.
-+    private fun applyPhonectlHaptics(prefs: android.content.SharedPreferences) {
-+        if (prefs.getBoolean("phonectl_haptics", false)) return
-+        prefs.edit { putBoolean(Settings.PREF_VIBRATE_ON, true).putBoolean("phonectl_haptics", true) }
-+    }
-+
      // old variant for old folder structure
      private fun getCustomLayoutFile(layoutName: String, context: Context): File =
          File(File(DeviceProtectedUtils.getFilesDir(context), "layouts"), layoutName)
@@ -223,10 +547,26 @@ index 5480eb2..653ba05 100644
          if (latinIME.mSettings.current.mClipboardHistoryEnabled) {
              fetchPrimaryClip()
 diff --git a/app/src/main/java/helium314/keyboard/latin/LatinIME.java b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
-index 4b3e35b..8f915b0 100644
+index 4b3e35b..e7aca76 100644
 --- a/app/src/main/java/helium314/keyboard/latin/LatinIME.java
 +++ b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
-@@ -559,6 +559,7 @@ public class LatinIME extends InputMethodService implements
+@@ -26,6 +26,7 @@ import android.util.PrintWriterPrinter;
+ import android.util.Printer;
+ import android.view.KeyEvent;
+ import android.view.View;
++import android.widget.FrameLayout;
+ import android.view.Window;
+ import android.view.inputmethod.CompletionInfo;
+ import android.view.inputmethod.EditorInfo;
+@@ -45,6 +46,7 @@ import helium314.keyboard.keyboard.KeyboardMode;
+ import helium314.keyboard.keyboard.emoji.EmojiPalettesView;
+ import helium314.keyboard.keyboard.emoji.EmojiSearchActivity;
+ import helium314.keyboard.keyboard.emoji.EmojiSearchActivityKt;
++import helium314.keyboard.keyboard.emoji.InlineEmojiSearch;
+ import helium314.keyboard.keyboard.internal.KeyboardIconsSet;
+ import helium314.keyboard.keyboard.internal.keyboard_parser.floris.KeyCode;
+ import helium314.keyboard.latin.common.InsetsOutlineProvider;
+@@ -559,6 +561,7 @@ public class LatinIME extends InputMethodService implements
  
          loadSettings();
          mClipboardHistoryManager.onCreate();
@@ -234,7 +574,15 @@ index 4b3e35b..8f915b0 100644
          mHandler.onCreate();
          if (FoldableUtils.INSTANCE.isFoldable())
              foldableObserver = new FoldableUtils.FoldableObserver(this);
-@@ -706,6 +707,7 @@ public class LatinIME extends InputMethodService implements
+@@ -696,6 +699,7 @@ public class LatinIME extends InputMethodService implements
+         mKeyboardSwitcher.setThemeNeedsReload(); // necessary for emoji search
+         EmojiPalettesView.closeDictionaryFacilitator();
+         EmojiSearchActivity.Companion.closeDictionaryFacilitator();
++        InlineEmojiSearch.closeDictionaries();
+     }
+ 
+     // used for debug
+@@ -706,6 +710,7 @@ public class LatinIME extends InputMethodService implements
      @Override
      public void onDestroy() {
          mClipboardHistoryManager.onDestroy();
@@ -242,6 +590,92 @@ index 4b3e35b..8f915b0 100644
          mDictionaryFacilitator.closeDictionaries();
          mSettings.onDestroy();
          if (foldableObserver != null)
+@@ -770,6 +775,7 @@ public class LatinIME extends InputMethodService implements
+ 
+     @Override
+     public void setInputView(final View view) {
++        InlineEmojiSearch.stop();
+         super.setInputView(view);
+         mInputView = view;
+         mInsetsUpdater = ViewOutlineProviderUtilsKt.setInsetsOutlineProvider(view);
+@@ -1051,6 +1057,7 @@ public class LatinIME extends InputMethodService implements
+     }
+ 
+     void onFinishInputViewInternal(final boolean finishingInput) {
++        InlineEmojiSearch.stop();
+         super.onFinishInputView(finishingInput);
+         Log.i(TAG, "onFinishInputView");
+         cleanupInternalStateForFinishInput();
+@@ -1428,6 +1435,11 @@ public class LatinIME extends InputMethodService implements
+     // This method is public for testability of LatinIME, but also in the future it should
+     // completely replace #onCodeInput.
+     public void onEvent(@NonNull final Event event) {
++        if (InlineEmojiSearch.isActive()) {
++            if (InlineEmojiSearch.onEvent(event))
++                mKeyboardSwitcher.onEvent(event, 0, null);
++            return;
++        }
+         if (KeyCode.VOICE_INPUT == event.getKeyCode()) {
+             mRichImm.switchToShortcutIme(this);
+         }
+@@ -1441,6 +1453,10 @@ public class LatinIME extends InputMethodService implements
+ 
+     public void onTextInput(@Nullable String rawText) {
+         if (rawText == null) return;
++        if (InlineEmojiSearch.isActive()) {
++            InlineEmojiSearch.onText(rawText);
++            return;
++        }
+         // TODO: have the keyboard pass the correct key code when we need it.
+         Event event = Event.createSoftwareTextEvent(rawText, KeyCode.MULTIPLE_CODE_POINTS, null);
+         InputTransaction completeInputTransaction = mInputLogic.onTextInput(mSettings.getCurrent(),
+@@ -1451,15 +1467,18 @@ public class LatinIME extends InputMethodService implements
+     }
+ 
+     public void onStartBatchInput() {
++        if (InlineEmojiSearch.isActive()) return;
+         mInputLogic.onStartBatchInput(mSettings.getCurrent(), mKeyboardSwitcher, mHandler);
+         mGestureConsumer.onGestureStarted(mRichImm.getCurrentSubtypeLocale(), mKeyboardSwitcher.getKeyboard());
+     }
+ 
+     public void onUpdateBatchInput(final InputPointers batchPointers) {
++        if (InlineEmojiSearch.isActive()) return;
+         mInputLogic.onUpdateBatchInput(batchPointers);
+     }
+ 
+     public void onEndBatchInput(final InputPointers batchPointers) {
++        if (InlineEmojiSearch.isActive()) return;
+         mInputLogic.onEndBatchInput(batchPointers);
+         mGestureConsumer.onGestureCompleted(batchPointers);
+     }
+@@ -1750,9 +1769,24 @@ public class LatinIME extends InputMethodService implements
+     }
+ 
+     public void launchEmojiSearch() {
+-        Log.d(EmojiSearchActivityKt.TAG, "before activity launch");
+-        startActivity(new Intent().setClass(this, EmojiSearchActivity.class)
+-                          .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
++        final FrameLayout strip = mKeyboardSwitcher.getStripContainer();
++        if (strip == null) return;
++        mKeyboardSwitcher.resetKeyboardStateToAlphabetWithoutAutoCaps();
++        InlineEmojiSearch.start(mDisplayContext, strip, emoji -> { commitSearchEmoji(emoji); return kotlin.Unit.INSTANCE; }, () -> { closeEmojiSearch(); return kotlin.Unit.INSTANCE; });
++    }
++
++    private void commitSearchEmoji(final String emoji) {
++        final long start = android.os.SystemClock.uptimeMillis();
++        final Event event = Event.createSoftwareTextEvent(emoji, KeyCode.MULTIPLE_CODE_POINTS, null);
++        final InputTransaction transaction = mInputLogic.onTextInput(mSettings.getCurrent(), event,
++                mKeyboardSwitcher.getKeyboardCapsMode(), mHandler);
++        updateStateAfterInputTransaction(transaction);
++        Log.i(TAG, "emoji search insert took " + (android.os.SystemClock.uptimeMillis() - start) + " ms");
++    }
++
++    private void closeEmojiSearch() {
++        InlineEmojiSearch.stop();
++        mKeyboardSwitcher.setEmojiKeyboard();
+     }
+ 
+     private void onEmojiSearchDone(Intent intent) {
 diff --git a/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt b/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt
 new file mode 100644
 index 0000000..aebc2c0
