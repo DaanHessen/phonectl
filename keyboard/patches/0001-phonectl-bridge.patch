@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 0d4dcaf..0614f63 100755
+index 0d4dcaf..edfd64c 100755
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,14 +10,14 @@ android {
@@ -12,8 +12,8 @@ index 0d4dcaf..0614f63 100755
          targetSdk = 37
 -        versionCode = 4201
 -        versionName = "4.2"
-+        versionCode = 4207
-+        versionName = "4.2.7"
++        versionCode = 4208
++        versionName = "4.2.8"
          ndk {
              abiFilters.clear()
 -            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -77,7 +77,7 @@ index d50a3c9..ed02c2f 100644
                  android:directBootAware="true"
                  android:exported="true">
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java b/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java
-index 13d1bab..323fee0 100644
+index 13d1bab..e097883 100644
 --- a/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java
 +++ b/app/src/main/java/helium314/keyboard/keyboard/KeyboardSwitcher.java
 @@ -202,6 +202,10 @@ public final class KeyboardSwitcher {
@@ -91,6 +91,110 @@ index 13d1bab..323fee0 100644
      public void onPressKey(int code, int pointerCount, int currentAutoCapsState,
              @Nullable RecapitalizeMode currentRecapitalizeState) {
          mState.onPressKey(code, pointerCount, currentAutoCapsState, currentRecapitalizeState);
+@@ -238,6 +242,7 @@ public final class KeyboardSwitcher {
+         final int stripVisibility = mLatinIME.hasSuggestionStripView()? View.VISIBLE : View.GONE;
+         mStripContainer.setVisibility(stripVisibility);
+         PointerTracker.switchTo(mKeyboardView);
++        mKeyboardView.setCoverBottom(0);
+         mKeyboardView.setVisibility(visibility);
+         // The visibility of {@link #mKeyboardView} must be aligned with {@link #MainKeyboardFrame}.
+         // @see #getVisibleKeyboardView() and
+@@ -396,6 +401,23 @@ public final class KeyboardSwitcher {
+         }
+     }
+ 
++    /** Top of the bottom row (the row with the space key), including half the row gap above it. */
++    private static int bottomRowTop(@Nullable final Keyboard keyboard) {
++        if (keyboard == null) return 0;
++        int top = -1;
++        for (final Key key : keyboard.getSortedKeys()) {
++            if (key.getCode() == helium314.keyboard.latin.common.Constants.CODE_SPACE) {
++                top = key.getY();
++                break;
++            }
++        }
++        if (top < 0) {
++            for (final Key key : keyboard.getSortedKeys())
++                top = Math.max(top, key.getY());
++        }
++        return Math.max(0, top - keyboard.mVerticalGap / 2);
++    }
++
+     private static int getSecondaryStripVisibility() {
+         return Settings.getValues().isSecondaryStripVisible()? View.VISIBLE : View.GONE;
+     }
+@@ -648,14 +670,18 @@ public final class KeyboardSwitcher {
+                 Log.d(TAG, "setEmojiKeyboard");
+             }
+             mMainKeyboardFrame.setVisibility(View.VISIBLE);
+-            // The visibility of {@link #mKeyboardView} must be aligned with {@link #MainKeyboardFrame}.
+-            // @see #getVisibleKeyboardView() and
+-            // @see LatinIME#onComputeInset(android.inputmethodservice.InputMethodService.Insets)
+-            mKeyboardView.setVisibility(View.GONE);
+-            mSuggestionStripView.setVisibility(View.GONE);
+-            mStripContainer.setVisibility(getSecondaryStripVisibility());
++            // One surface like Gboard: the strip and the keyboard's own bottom row stay, the emoji panel
++            // covers only the rows above the bottom row.
++            final int coverBottom = bottomRowTop(mKeyboardView.getKeyboard());
++            PointerTracker.switchTo(mKeyboardView);
++            mKeyboardView.setVisibility(View.VISIBLE);
++            mKeyboardView.setCoverBottom(coverBottom);
++            mEmojiPalettesView.setCoverHeight(coverBottom);
++            final int stripVisibility = mLatinIME.hasSuggestionStripView() ? View.VISIBLE : View.GONE;
++            mStripContainer.setVisibility(stripVisibility);
++            mSuggestionStripView.setVisibility(stripVisibility);
+             mClipboardStripScrollView.setVisibility(View.GONE);
+-            mEmojiTabStripView.setVisibility(View.VISIBLE);
++            mEmojiTabStripView.setVisibility(View.GONE);
+             mClipboardHistoryView.setVisibility(View.GONE);
+             mEmojiPalettesView.startEmojiPalettes(mKeyboardView.getKeyVisualAttribute(),
+                 mLatinIME.getCurrentInputEditorInfo(), mLatinIME.mKeyboardActionListener);
+@@ -672,6 +698,7 @@ public final class KeyboardSwitcher {
+             // @see #getVisibleKeyboardView() and
+             // @see LatinIME#onComputeInset(android.inputmethodservice.InputMethodService.Insets)
+             mKeyboardView.setVisibility(View.GONE);
++            mKeyboardView.setCoverBottom(0);
+             mEmojiTabStripView.setVisibility(View.GONE);
+             mSuggestionStripView.setVisibility(View.GONE);
+             mStripContainer.setVisibility(getSecondaryStripVisibility());
+diff --git a/app/src/main/java/helium314/keyboard/keyboard/KeyboardView.java b/app/src/main/java/helium314/keyboard/keyboard/KeyboardView.java
+index a236c46..aa8ca7e 100644
+--- a/app/src/main/java/helium314/keyboard/keyboard/KeyboardView.java
++++ b/app/src/main/java/helium314/keyboard/keyboard/KeyboardView.java
+@@ -279,6 +279,19 @@ public class KeyboardView extends View {
+         }
+     }
+ 
++    private int mCoverBottom;
++
++    /** Keys starting above this y are not drawn: the emoji panel covers them, only the bottom row shows. */
++    public void setCoverBottom(final int y) {
++        if (y == mCoverBottom) return;
++        mCoverBottom = y;
++        invalidateAllKeys();
++    }
++
++    public int getCoverBottom() {
++        return mCoverBottom;
++    }
++
+     private void onDrawKeyboard(@NonNull final Canvas canvas) {
+         final Keyboard keyboard = getKeyboard();
+         if (keyboard == null) {
+@@ -302,11 +315,12 @@ public class KeyboardView extends View {
+             }
+             // Draw all keys.
+             for (final Key key : keyboard.getSortedKeys()) {
++                if (key.getY() < mCoverBottom) continue;
+                 onDrawKey(key, canvas, paint);
+             }
+         } else {
+             for (final Key key : mInvalidatedKeys) {
+-                if (!keyboard.hasKey(key)) {
++                if (!keyboard.hasKey(key) || key.getY() < mCoverBottom) {
+                     continue;
+                 }
+                 if (background != null) {
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt
 index a5eb0d1..6870254 100644
 --- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt
@@ -105,12 +209,94 @@ index a5eb0d1..6870254 100644
          val i = shownCategories.indexOfFirst { it.category == category }
          return if (i == -1) 0 else i
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java
-index 6083d92..3121e26 100644
+index 6083d92..a7efe78 100644
 --- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java
 +++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java
-@@ -368,6 +368,11 @@ public final class EmojiPalettesView extends LinearLayout
-         params.updateParams(mEmojiLayoutParams.getBottomRowKeyboardHeight(), keyVisualAttr);
-         new EmojiLayoutParams(getResources()).setEmojiListProperties(mPager); // necessary when floating
+@@ -37,6 +37,7 @@ import helium314.keyboard.keyboard.KeyboardView;
+ import helium314.keyboard.keyboard.MainKeyboardView;
+ import helium314.keyboard.keyboard.PointerTracker;
+ import helium314.keyboard.keyboard.internal.KeyDrawParams;
++import helium314.keyboard.keyboard.internal.KeyboardIconsSet;
+ import helium314.keyboard.keyboard.internal.KeyVisualAttributes;
+ import helium314.keyboard.keyboard.internal.keyboard_parser.EmojiParserKt;
+ import helium314.keyboard.keyboard.internal.keyboard_parser.floris.KeyCode;
+@@ -200,6 +201,8 @@ public final class EmojiPalettesView extends LinearLayout
+     private KeyboardActionListener mKeyboardActionListener = KeyboardActionListener.EMPTY_LISTENER;
+     private final EmojiCategory mEmojiCategory;
+     private ViewPager2 mPager;
++    private int mCoverHeight;
++    private final DeleteRepeater mDeleteRepeater = new DeleteRepeater();
+ 
+     public EmojiPalettesView(final Context context, final AttributeSet attrs) {
+         this(context, attrs, R.attr.emojiPalettesViewStyle);
+@@ -222,6 +225,13 @@ public final class EmojiPalettesView extends LinearLayout
+         setFitsSystemWindows(true);
+     }
+ 
++    /** Height of the main keyboard above its bottom row: the panel covers exactly the letter rows. */
++    public void setCoverHeight(final int height) {
++        if (height == mCoverHeight) return;
++        mCoverHeight = height;
++        requestLayout();
++    }
++
+     @Override
+     protected void onMeasure(final int widthMeasureSpec, final int heightMeasureSpec) {
+         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+@@ -229,15 +239,16 @@ public final class EmojiPalettesView extends LinearLayout
+         // The main keyboard expands to the entire this {@link KeyboardView}.
+         final int width = ResourceUtils.getKeyboardWidth(getContext(), Settings.getValues())
+                 + getPaddingLeft() + getPaddingRight();
+-        final int height = ResourceUtils.getSecondaryKeyboardHeight(res, Settings.getValues())
++        final int height = (mCoverHeight > 0 ? mCoverHeight : ResourceUtils.getSecondaryKeyboardHeight(res, Settings.getValues()))
+                 + getPaddingTop() + getPaddingBottom();
+         mEmojiCategoryPageIndicatorView.mWidth = width;
++        super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
++                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
+         setMeasuredDimension(width, height);
+     }
+ 
+     private void addTab(LinearLayout host, EmojiCategory.Category category) {
+         final ImageView iconView = new ImageView(getContext());
+-        mColors.setBackground(iconView, ColorType.STRIP_BACKGROUND);
+         mColors.setColor(iconView, ColorType.EMOJI_CATEGORY);
+         iconView.setScaleType(ImageView.ScaleType.CENTER);
+         iconView.setImageResource(mEmojiCategory.getCategoryTabIcon(category));
+@@ -260,20 +271,19 @@ public final class EmojiPalettesView extends LinearLayout
+     public void initialize() { // needs to be delayed for access to EmojiTabStrip, which is not a child of this view
+         if (initialized) return;
+         mEmojiCategory.initialize();
+-        mTabStrip = (LinearLayout) KeyboardSwitcher.getInstance().getEmojiTabStrip();
+-        if (Settings.getValues().isSecondaryStripVisible()) {
+-            for (EmojiCategory.CategoryProperties properties : mEmojiCategory.getShownCategories()) {
+-                addTab(mTabStrip, properties.getCategory());
+-            }
++        mTabStrip = findViewById(R.id.emoji_tab_row);
++        addSearchButton(mTabStrip);
++        for (EmojiCategory.CategoryProperties properties : mEmojiCategory.getShownCategories()) {
++            addTab(mTabStrip, properties.getCategory());
+         }
++        addDeleteButton(mTabStrip);
+ 
+         mPager = findViewById(R.id.emoji_pager);
+         mPager.setAdapter(new PagerAdapter(mPager));
+-        mEmojiLayoutParams.setEmojiListProperties(mPager);
+         mEmojiCategoryPageIndicatorView = findViewById(R.id.emoji_category_page_id_view);
+         mEmojiLayoutParams.setCategoryPageIdViewProperties(mEmojiCategoryPageIndicatorView);
+         setCurrentCategory(mEmojiCategory.getCurrentCategory(), true);
+-        mEmojiCategoryPageIndicatorView.setColors(mColors.get(ColorType.EMOJI_CATEGORY_SELECTED), mColors.get(ColorType.STRIP_BACKGROUND));
++        mEmojiCategoryPageIndicatorView.setColors(mColors.get(ColorType.EMOJI_CATEGORY_SELECTED), android.graphics.Color.TRANSPARENT);
+         initialized = true;
+     }
+ 
+@@ -363,11 +373,12 @@ public final class EmojiPalettesView extends LinearLayout
+                final EditorInfo editorInfo, final KeyboardActionListener keyboardActionListener) {
+         initialize();
+ 
+-        setupBottomRowKeyboard(editorInfo, keyboardActionListener);
+-        final KeyDrawParams params = new KeyDrawParams();
+-        params.updateParams(mEmojiLayoutParams.getBottomRowKeyboardHeight(), keyVisualAttr);
+-        new EmojiLayoutParams(getResources()).setEmojiListProperties(mPager); // necessary when floating
          mEmojiCategory.reloadRecents(); // in case recents changed from outside emoji keyboards
 +        if (!mEmojiCategory.isInRecentTab() && mEmojiCategory.getHasRecents()) {
 +            // like Gboard: the panel opens on the recently used emojis
@@ -120,6 +306,110 @@ index 6083d92..3121e26 100644
          setupSidePadding();
          initDictionaryFacilitator();
      }
+@@ -394,6 +405,86 @@ public final class EmojiPalettesView extends LinearLayout
+         keyboardView.setKeyboard(keyboard);
+     }
+ 
++    private void addSearchButton(final LinearLayout host) {
++        final Context context = getContext();
++        final float density = getResources().getDisplayMetrics().density;
++        final ImageView view = new ImageView(context);
++        view.setImageDrawable(KeyboardIconsSet.Companion.getInstance().getNewDrawable(KeyboardIconsSet.NAME_SEARCH_KEY, context));
++        mColors.setColor(view, ColorType.EMOJI_CATEGORY_SELECTED);
++        view.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
++        final int pad = (int) (7 * density);
++        view.setPadding(pad, pad, pad, pad);
++        final android.graphics.drawable.GradientDrawable chip = new android.graphics.drawable.GradientDrawable();
++        chip.setCornerRadius(500 * density);
++        chip.setColor(mColors.get(ColorType.EMOJI_SEARCH_BACKGROUND));
++        view.setBackground(chip);
++        view.setContentDescription(context.getString(R.string.search_field_placeholder));
++        view.setOnClickListener(v -> {
++            AudioAndHapticFeedbackManager.getInstance().performHapticAndAudioFeedback(KeyCode.NOT_SPECIFIED, this, HapticEvent.KEY_PRESS);
++            mKeyboardActionListener.onCodeInput(KeyCode.EMOJI_SEARCH, NOT_A_COORDINATE, NOT_A_COORDINATE, false);
++        });
++        final LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (44 * density), (int) (32 * density));
++        lp.setMarginStart((int) (2 * density));
++        lp.setMarginEnd((int) (4 * density));
++        host.addView(view, lp);
++    }
++
++    @SuppressLint("ClickableViewAccessibility")
++    private void addDeleteButton(final LinearLayout host) {
++        final Context context = getContext();
++        final ImageView view = new ImageView(context);
++        view.setImageDrawable(KeyboardIconsSet.Companion.getInstance().getNewDrawable(KeyboardIconsSet.NAME_DELETE_KEY, context));
++        mColors.setColor(view, ColorType.EMOJI_CATEGORY_SELECTED);
++        view.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
++        final int pad = (int) (8 * getResources().getDisplayMetrics().density);
++        view.setPadding(pad, pad, pad, pad);
++        view.setContentDescription(context.getString(R.string.spoken_description_delete));
++        view.setOnTouchListener((v, event) -> {
++            switch (event.getActionMasked()) {
++                case android.view.MotionEvent.ACTION_DOWN -> {
++                    v.setPressed(true);
++                    mKeyboardActionListener.onPressKey(KeyCode.DELETE, 0, 1, HapticEvent.KEY_PRESS);
++                    mDeleteRepeater.start(v);
++                }
++                case android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
++                    v.setPressed(false);
++                    mDeleteRepeater.stop();
++                    mKeyboardActionListener.onReleaseKey(KeyCode.DELETE, false);
++                }
++            }
++            return true;
++        });
++        host.addView(view, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.4f));
++    }
++
++    /** Deletes once on touch, then repeats like the keyboard's delete key while held. */
++    private final class DeleteRepeater implements Runnable {
++        private View mView;
++        private int mCount;
++
++        void start(final View view) {
++            stop();
++            mView = view;
++            mCount = 0;
++            run();
++        }
++
++        void stop() {
++            if (mView != null) mView.removeCallbacks(this);
++            mView = null;
++        }
++
++        @Override
++        public void run() {
++            if (mView == null) return;
++            mKeyboardActionListener.onCodeInput(KeyCode.DELETE, NOT_A_COORDINATE, NOT_A_COORDINATE, mCount > 0);
++            if (mCount > 0)
++                AudioAndHapticFeedbackManager.getInstance().performHapticAndAudioFeedback(KeyCode.DELETE, mView, HapticEvent.KEY_REPEAT);
++            mCount++;
++            mView.postDelayed(this, mCount == 1 ? Settings.getValues().mKeyLongpressTimeout : 50);
++        }
++    }
++
+     private void setupSidePadding() {
+         final SettingsValues sv = Settings.getValues();
+         final int keyboardWidth = ResourceUtils.getKeyboardWidth(getContext(), sv);
+@@ -420,6 +511,7 @@ public final class EmojiPalettesView extends LinearLayout
+     }
+ 
+     public void stopEmojiPalettes() {
++        mDeleteRepeater.stop();
+         if (!initialized) return;
+         getRecentsKeyboard().flushPendingRecentKeys();
+     }
+@@ -452,7 +544,7 @@ public final class EmojiPalettesView extends LinearLayout
+                                 mEmojiCategory.getCurrentCategory()), ! initial && ! isAnimationsDisabled());
+             }
+ 
+-            if (Settings.getValues().isSecondaryStripVisible()) {
++            {
+                 View old = mTabStrip.findViewWithTag(oldCategory);
+                 View current = mTabStrip.findViewWithTag(category);
+ 
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
 index 33a9426..5f16cf1 100644
 --- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
@@ -207,10 +497,10 @@ index 33a9426..5f16cf1 100644
  }
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
 new file mode 100644
-index 0000000..8bf0688
+index 0000000..3f0ddaf
 --- /dev/null
 +++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,349 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +package helium314.keyboard.keyboard.emoji
 +
@@ -246,8 +536,9 @@ index 0000000..8bf0688
 +import java.util.concurrent.Executors
 +
 +/**
-+ * Gboard-like emoji search inside the keyboard: a search field above a row of matching emojis. The letter keys of
-+ * the keyboard type into the field (nothing reaches the app), tapping an emoji inserts it and the keyboard stays open.
++ * Gboard-like emoji search inside the keyboard, in the strip row (the keyboard keeps its height): a search field and
++ * the matching emojis next to it. The letter keys type into the field (nothing reaches the app), tapping an emoji
++ * inserts it and the keyboard stays open.
 + * The query is kept in memory only and dropped when the search ends.
 + */
 +object InlineEmojiSearch {
@@ -258,7 +549,6 @@ index 0000000..8bf0688
 +    private val query = StringBuilder()
 +    private var root: LinearLayout? = null
 +    private var container: FrameLayout? = null
-+    private var originalHeight = 0
 +    private val hiddenSiblings = mutableListOf<Pair<View, Int>>()
 +    private var queryView: TextView? = null
 +    private var caret: CaretSpan? = null
@@ -298,7 +588,7 @@ index 0000000..8bf0688
 +            colorFilter = android.graphics.PorterDuffColorFilter(hintColor, android.graphics.PorterDuff.Mode.SRC_IN)
 +        }
 +        val text = TextView(context).apply {
-+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
++            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
 +            setTextColor(textColor)
 +            maxLines = 1
 +            ellipsize = android.text.TextUtils.TruncateAt.START
@@ -327,13 +617,13 @@ index 0000000..8bf0688
 +                marginEnd = (8 * density).toInt()
 +            })
 +            addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-+            addView(clear, LinearLayout.LayoutParams((40 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
++            addView(clear, LinearLayout.LayoutParams((36 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
 +        }
 +        val fieldRow = FrameLayout(context).apply {
 +            addView(field, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (rowHeight - 12 * density).toInt(),
 +                Gravity.CENTER_VERTICAL).apply {
-+                marginStart = (8 * density).toInt()
-+                marginEnd = (8 * density).toInt()
++                marginStart = (6 * density).toInt()
++                marginEnd = (4 * density).toInt()
 +            })
 +        }
 +
@@ -347,22 +637,20 @@ index 0000000..8bf0688
 +        resultsScroll = scroll
 +
 +        val rootView = LinearLayout(context).apply {
-+            orientation = LinearLayout.VERTICAL
++            orientation = LinearLayout.HORIZONTAL
 +            isClickable = true
 +            setBackgroundColor(colors.get(ColorType.MAIN_BACKGROUND))
-+            addView(fieldRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
-+            addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
++            addView(fieldRow, LinearLayout.LayoutParams(0, rowHeight, 0.44f))
++            addView(scroll, LinearLayout.LayoutParams(0, rowHeight, 0.56f))
 +        }
 +        root = rootView
 +
-+        originalHeight = strip.layoutParams.height
 +        hiddenSiblings.clear()
 +        for (i in 0 until strip.childCount) {
 +            val child = strip.getChildAt(i)
 +            hiddenSiblings.add(child to child.visibility)
 +            child.visibility = View.INVISIBLE
 +        }
-+        strip.layoutParams = strip.layoutParams.apply { height = rowHeight * 2 }
 +        strip.visibility = View.VISIBLE
 +        strip.addView(rootView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +
@@ -392,9 +680,6 @@ index 0000000..8bf0688
 +        (rootView.parent as? ViewGroup)?.removeView(rootView)
 +        hiddenSiblings.forEach { (view, visibility) -> view.visibility = visibility }
 +        hiddenSiblings.clear()
-+        container?.let { c ->
-+            c.layoutParams = c.layoutParams.apply { height = originalHeight }
-+        }
 +        root = null
 +        container = null
 +        queryView = null
@@ -513,7 +798,7 @@ index 0000000..8bf0688
 +        emojis.forEach { emoji ->
 +            val cell = TextView(context).apply {
 +                text = emoji
-+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
++                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
 +                typeface = Typeface.DEFAULT
 +                gravity = Gravity.CENTER
 +                includeFontPadding = false
@@ -529,9 +814,7 @@ index 0000000..8bf0688
 +                }
 +                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
 +            }
-+            list.addView(cell, LinearLayout.LayoutParams((46 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-+                marginStart = (2 * density).toInt()
-+            })
++            list.addView(cell, LinearLayout.LayoutParams((44 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
 +        }
 +    }
 +
@@ -843,6 +1126,20 @@ index 0000000..781e98d
 +        override fun getOpacity() = PixelFormat.TRANSLUCENT
 +    }
 +}
+diff --git a/app/src/main/java/helium314/keyboard/latin/KeyboardWrapperView.kt b/app/src/main/java/helium314/keyboard/latin/KeyboardWrapperView.kt
+index 4de9cb9..875ac20 100644
+--- a/app/src/main/java/helium314/keyboard/latin/KeyboardWrapperView.kt
++++ b/app/src/main/java/helium314/keyboard/latin/KeyboardWrapperView.kt
+@@ -148,6 +148,9 @@ class KeyboardWrapperView @JvmOverloads constructor(
+                 keyboardLeft + keyboardView.measuredWidth,
+                 keyboardView.measuredHeight
+         )
++        val mainView = KeyboardSwitcher.getInstance().mainKeyboardView
++        if (mainView != null && mainView !== keyboardView && mainView.visibility == View.VISIBLE)
++            mainView.layout(keyboardLeft, 0, keyboardLeft + mainView.measuredWidth, mainView.measuredHeight)
+ 
+         val scale = Settings.getValues().mKeyboardHeightScale
+         // scale one-handed mode button height if keyboard height scale is < 80%
 diff --git a/app/src/main/java/helium314/keyboard/latin/LatinIME.java b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
 index 4b3e35b..97c16c8 100644
 --- a/app/src/main/java/helium314/keyboard/latin/LatinIME.java
@@ -1545,6 +1842,45 @@ index 96cac99..213b3be 100644
 +        android:scaleType="centerInside" />
  
  </LinearLayout>
+diff --git a/app/src/main/res/layout/emoji_palettes_view.xml b/app/src/main/res/layout/emoji_palettes_view.xml
+index 0625d09..bc4bcd0 100644
+--- a/app/src/main/res/layout/emoji_palettes_view.xml
++++ b/app/src/main/res/layout/emoji_palettes_view.xml
+@@ -9,23 +9,26 @@
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     android:layout_width="match_parent"
+     android:layout_height="wrap_content"
+-    android:layout_gravity="bottom"
++    android:layout_gravity="top"
+     android:orientation="vertical"
+     android:visibility="gone"
++    android:clickable="true"
+     android:background="@android:color/transparent"
+     style="?attr/emojiPalettesViewStyle"
+ >
+-    <androidx.viewpager2.widget.ViewPager2
+-        android:id="@+id/emoji_pager"
++    <LinearLayout
++        android:id="@+id/emoji_tab_row"
++        android:orientation="horizontal"
++        android:gravity="center_vertical"
+         android:layout_width="match_parent"
+-        android:layout_height="wrap_content" />
++        android:layout_height="@dimen/config_emoji_tab_row_height" />
+     <helium314.keyboard.keyboard.emoji.EmojiCategoryPageIndicatorView
+         android:id="@+id/emoji_category_page_id_view"
+         android:layout_width="match_parent"
+         android:layout_height="2dip" />
+-    <helium314.keyboard.keyboard.MainKeyboardView
+-        android:id="@+id/bottom_row_keyboard"
++    <androidx.viewpager2.widget.ViewPager2
++        android:id="@+id/emoji_pager"
+         android:layout_width="match_parent"
+-        android:layout_height="wrap_content" />
+-
++        android:layout_height="0dp"
++        android:layout_weight="1" />
+ </helium314.keyboard.keyboard.emoji.EmojiPalettesView>
 diff --git a/app/src/main/res/layout/suggestions_strip.xml b/app/src/main/res/layout/suggestions_strip.xml
 index ee2f85e..87cee32 100644
 --- a/app/src/main/res/layout/suggestions_strip.xml
@@ -1612,10 +1948,10 @@ index de6c778..1e883c8 100644
      <string name="gesture_data_zip" translatable="false">gesture_data.zip</string>
 diff --git a/app/src/main/res/values/phonectl.xml b/app/src/main/res/values/phonectl.xml
 new file mode 100644
-index 0000000..b974ea3
+index 0000000..497451a
 --- /dev/null
 +++ b/app/src/main/res/values/phonectl.xml
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,14 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!-- SPDX-License-Identifier: GPL-3.0-only -->
 +<!-- phonectl Keyboard. The labels must be resources: WelcomeWizard reads applicationInfo.labelRes. -->
@@ -1628,6 +1964,7 @@ index 0000000..b974ea3
 +    <fraction name="phonectl_key_horizontal_gap">1.333%p</fraction>
 +    <fraction name="phonectl_key_letter_ratio">50%</fraction>
 +    <dimen name="phonectl_key_radius">6dp</dimen>
++    <dimen name="config_emoji_tab_row_height">40dp</dimen>
 +</resources>
 diff --git a/app/src/main/res/values/themes-rounded-base-border.xml b/app/src/main/res/values/themes-rounded-base-border.xml
 index 568418e..15d63bd 100644

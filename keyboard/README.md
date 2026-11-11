@@ -84,6 +84,15 @@ What the patch changes (`patches/0001-phonectl-bridge.patch`):
   `Window.setNavigationBarColor` any more, so on some phones and navigation
   modes the app behind showed through that band (HeliBoard issue 1818).
 
+* Version 4.2.8: keyboard, emoji panel and emoji search are one surface.
+  The strip (toolbar or suggestions) and the keyboard's own bottom row stay
+  in place; the emoji panel only covers the letter rows above the bottom
+  row, at exactly their height (`KeyboardView.setCoverBottom`). The panel's
+  top row holds the search button, the category tabs and a delete key that
+  repeats while held; the emoji key in the bottom row toggles back to the
+  letters. Emoji search lives in the strip row (field on the left, matching
+  emojis on the right), so the keyboard keeps its height there too.
+
 Everything else is HeliBoard as released. HeliBoard's own clipboard-history
 setting does not affect the sync.
 
