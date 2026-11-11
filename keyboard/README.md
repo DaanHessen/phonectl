@@ -70,6 +70,20 @@ What the patch changes (`patches/0001-phonectl-bridge.patch`):
   the left, so suggestions are centred; the clipboard chip centres its text
   between the left padding and the close button.
 
+* Version 4.2.7: the emoji search covers the strip with the keyboard
+  background and hides the toolbar under it (before, the toolbar showed
+  through the search row), and the search caret sits right after the query.
+  The clipboard chip shows a one-line preview (`ClipPreview.kt`): links
+  without `https://`, cut in the middle so the domain and the end stay
+  visible; commands and code in monospace with line breaks shown as a return
+  sign; control and bidi characters removed and the text cut on a code point
+  boundary. The emoji panel opens on the recent emojis when there are any,
+  and clipboard history keeps items for an hour (Gboard's default).
+  `ImeNavBarFill.kt` paints the navigation bar area under the keyboard in the
+  keyboard colour: apps targeting Android 15+ cannot colour it with
+  `Window.setNavigationBarColor` any more, so on some phones and navigation
+  modes the app behind showed through that band (HeliBoard issue 1818).
+
 Everything else is HeliBoard as released. HeliBoard's own clipboard-history
 setting does not affect the sync.
 

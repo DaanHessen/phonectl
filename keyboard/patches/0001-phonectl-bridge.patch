@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 0d4dcaf..225ceb1 100755
+index 0d4dcaf..0614f63 100755
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,14 +10,14 @@ android {
@@ -12,8 +12,8 @@ index 0d4dcaf..225ceb1 100755
          targetSdk = 37
 -        versionCode = 4201
 -        versionName = "4.2"
-+        versionCode = 4206
-+        versionName = "4.2.6"
++        versionCode = 4207
++        versionName = "4.2.7"
          ndk {
              abiFilters.clear()
 -            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -91,6 +91,35 @@ index 13d1bab..323fee0 100644
      public void onPressKey(int code, int pointerCount, int currentAutoCapsState,
              @Nullable RecapitalizeMode currentRecapitalizeState) {
          mState.onPressKey(code, pointerCount, currentAutoCapsState, currentRecapitalizeState);
+diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt
+index a5eb0d1..6870254 100644
+--- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt
++++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiCategory.kt
+@@ -103,6 +103,8 @@ internal class EmojiCategory(private val context: Context, private val layoutSet
+ 
+     val isInRecentTab get() = currentCategory == Category.RECENTS
+ 
++    val hasRecents get() = getKeyboard(Category.RECENTS, 0).sortedKeys.isNotEmpty()
++
+     fun getTabIdFromCategoryId(category: Category): Int {
+         val i = shownCategories.indexOfFirst { it.category == category }
+         return if (i == -1) 0 else i
+diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java
+index 6083d92..3121e26 100644
+--- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java
++++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiPalettesView.java
+@@ -368,6 +368,11 @@ public final class EmojiPalettesView extends LinearLayout
+         params.updateParams(mEmojiLayoutParams.getBottomRowKeyboardHeight(), keyVisualAttr);
+         new EmojiLayoutParams(getResources()).setEmojiListProperties(mPager); // necessary when floating
+         mEmojiCategory.reloadRecents(); // in case recents changed from outside emoji keyboards
++        if (!mEmojiCategory.isInRecentTab() && mEmojiCategory.getHasRecents()) {
++            // like Gboard: the panel opens on the recently used emojis
++            setCurrentCategory(EmojiCategory.Category.RECENTS, true);
++            updateEmojiCategoryPageIdView();
++        }
+         setupSidePadding();
+         initDictionaryFacilitator();
+     }
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
 index 33a9426..5f16cf1 100644
 --- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
@@ -178,10 +207,10 @@ index 33a9426..5f16cf1 100644
  }
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
 new file mode 100644
-index 0000000..f64e660
+index 0000000..8bf0688
 --- /dev/null
 +++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,356 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +package helium314.keyboard.keyboard.emoji
 +
@@ -230,8 +259,11 @@ index 0000000..f64e660
 +    private var root: LinearLayout? = null
 +    private var container: FrameLayout? = null
 +    private var originalHeight = 0
++    private val hiddenSiblings = mutableListOf<Pair<View, Int>>()
 +    private var queryView: TextView? = null
-+    private var caret: View? = null
++    private var caret: CaretSpan? = null
++    private var hintText = ""
++    private var hintColorValue = 0
 +    private var caretAnimator: ValueAnimator? = null
 +    private var results: LinearLayout? = null
 +    private var resultsScroll: HorizontalScrollView? = null
@@ -268,16 +300,16 @@ index 0000000..f64e660
 +        val text = TextView(context).apply {
 +            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
 +            setTextColor(textColor)
-+            setHintTextColor(hintColor)
-+            hint = context.getString(R.string.search_field_placeholder)
 +            maxLines = 1
 +            ellipsize = android.text.TextUtils.TruncateAt.START
 +            gravity = Gravity.CENTER_VERTICAL
 +            includeFontPadding = false
 +        }
 +        queryView = text
-+        val caretView = View(context).apply { setBackgroundColor(textColor) }
-+        caret = caretView
++        val caretSpan = CaretSpan(textColor, (2 * density).toInt(), (1 * density).toInt())
++        caret = caretSpan
++        hintText = context.getString(R.string.search_field_placeholder)
++        hintColorValue = hintColor
 +        val clear = ImageView(context).apply {
 +            setImageResource(R.drawable.ic_close)
 +            colorFilter = android.graphics.PorterDuffColorFilter(textColor, android.graphics.PorterDuff.Mode.SRC_IN)
@@ -295,9 +327,6 @@ index 0000000..f64e660
 +                marginEnd = (8 * density).toInt()
 +            })
 +            addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-+            addView(caretView, LinearLayout.LayoutParams((2 * density).toInt(), (20 * density).toInt()).apply {
-+                marginStart = (1 * density).toInt()
-+            })
 +            addView(clear, LinearLayout.LayoutParams((40 * density).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
 +        }
 +        val fieldRow = FrameLayout(context).apply {
@@ -320,13 +349,19 @@ index 0000000..f64e660
 +        val rootView = LinearLayout(context).apply {
 +            orientation = LinearLayout.VERTICAL
 +            isClickable = true
-+            colors.setBackground(this, ColorType.STRIP_BACKGROUND)
++            setBackgroundColor(colors.get(ColorType.MAIN_BACKGROUND))
 +            addView(fieldRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
 +            addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
 +        }
 +        root = rootView
 +
 +        originalHeight = strip.layoutParams.height
++        hiddenSiblings.clear()
++        for (i in 0 until strip.childCount) {
++            val child = strip.getChildAt(i)
++            hiddenSiblings.add(child to child.visibility)
++            child.visibility = View.INVISIBLE
++        }
 +        strip.layoutParams = strip.layoutParams.apply { height = rowHeight * 2 }
 +        strip.visibility = View.VISIBLE
 +        strip.addView(rootView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -335,7 +370,13 @@ index 0000000..f64e660
 +            duration = 530
 +            repeatMode = ValueAnimator.REVERSE
 +            repeatCount = ValueAnimator.INFINITE
-+            addUpdateListener { caretView.alpha = if ((it.animatedValue as Float) > 0.5f) 1f else 0f }
++            addUpdateListener {
++                val on = (it.animatedValue as Float) > 0.5f
++                if (caretSpan.visible != on) {
++                    caretSpan.visible = on
++                    text.invalidate()
++                }
++            }
 +            start()
 +        }
 +        refreshQuery()
@@ -349,6 +390,8 @@ index 0000000..f64e660
 +        caretAnimator = null
 +        val rootView = root ?: return
 +        (rootView.parent as? ViewGroup)?.removeView(rootView)
++        hiddenSiblings.forEach { (view, visibility) -> view.visibility = visibility }
++        hiddenSiblings.clear()
 +        container?.let { c ->
 +            c.layoutParams = c.layoutParams.apply { height = originalHeight }
 +        }
@@ -401,7 +444,7 @@ index 0000000..f64e660
 +    }
 +
 +    private fun refreshQuery() {
-+        queryView?.text = query.toString()
++        renderQuery()
 +        if (query.isBlank()) {
 +            generation++
 +            showResults(RecentEmojis.get())
@@ -491,6 +534,38 @@ index 0000000..f64e660
 +            })
 +        }
 +    }
++
++    private fun renderQuery() {
++        val view = queryView ?: return
++        val span = caret ?: return
++        val sb = android.text.SpannableStringBuilder(query)
++        val caretAt = sb.length
++        sb.append('\u200B')
++        sb.setSpan(span, caretAt, caretAt + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++        if (query.isEmpty()) {
++            val start = sb.length
++            sb.append(hintText)
++            sb.setSpan(android.text.style.ForegroundColorSpan(hintColorValue), start, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++        }
++        view.text = sb
++    }
++
++    /** Blinking text cursor drawn in the text, so it sits right after the query (or before the hint). */
++    private class CaretSpan(color: Int, private val width: Int, private val gap: Int) : android.text.style.ReplacementSpan() {
++        private val paint = android.graphics.Paint().apply { this.color = color }
++        var visible = true
++
++        override fun getSize(p: android.graphics.Paint, text: CharSequence?, start: Int, end: Int, fm: android.graphics.Paint.FontMetricsInt?): Int {
++            if (fm != null) p.getFontMetricsInt(fm)
++            return width + 2 * gap
++        }
++
++        override fun draw(canvas: android.graphics.Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, p: android.graphics.Paint) {
++            if (!visible) return
++            val fm = p.fontMetrics
++            canvas.drawRect(x + gap, y + fm.ascent * 0.95f, x + gap + width, y + fm.descent * 0.9f, paint)
++        }
++    }
 +}
 diff --git a/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt b/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
 index 3edca41..09ce8a6 100644
@@ -534,11 +609,92 @@ index 3edca41..09ce8a6 100644
      // old variant for old folder structure
      private fun getCustomLayoutFile(layoutName: String, context: Context): File =
          File(File(DeviceProtectedUtils.getFilesDir(context), "layouts"), layoutName)
+diff --git a/app/src/main/java/helium314/keyboard/latin/ClipPreview.kt b/app/src/main/java/helium314/keyboard/latin/ClipPreview.kt
+new file mode 100644
+index 0000000..ea16eaf
+--- /dev/null
++++ b/app/src/main/java/helium314/keyboard/latin/ClipPreview.kt
+@@ -0,0 +1,67 @@
++// SPDX-License-Identifier: GPL-3.0-only
++// phonectl Keyboard. See phonectl/keyboard/README.md.
++
++package helium314.keyboard.latin
++
++/**
++ * One-line preview of a clip for the clipboard chip in the suggestion strip. Links lose their scheme
++ * and are cut in the middle (domain and end stay visible); commands and code keep their characters and
++ * show line breaks as a return sign; other text has its whitespace collapsed.
++ */
++data class ClipPreview(val text: String, val kind: Kind) {
++    enum class Kind { URL, CODE, TEXT }
++
++    companion object {
++        private const val MAX_CODE_POINTS = 300
++        private val url = Regex("""^(?:(?:https?|ftp)://|www\.)\S+$""", RegexOption.IGNORE_CASE)
++        private val scheme = Regex("""^(?:(?:https?|ftp)://)?(?:www\.)?""", RegexOption.IGNORE_CASE)
++        private val shellStart = Regex(
++            """^(?:[$#>]\s|\./|~/|/[\w.-]+/|(?:sudo|git|cd|ls|npm|npx|pnpm|yarn|pip3?|python3?|cargo|adb|ssh|scp|rsync|curl|wget|docker|kubectl|systemctl|journalctl|rg|chmod|chown|mkdir|pacman|apt|brew|gh)\s)""")
++        private val weakShellStart = Regex("""^(?:make|find|cat|echo|rm|cp|mv|go|node|grep|sed|awk|tar|nix|java|gradle|export)\s""")
++        private val shellArg = Regex("""\s[-./~$]|\S/\S|=""")
++        private val codeMarks = Regex("""\s\|\s|\S\|\S|&&|\|\||;\s*$|`|\$\(|\$\{|\$[A-Z_]{2,}|=>|::|\s--[a-z][\w-]*|\s-[a-zA-Z]{1,3}(?:\s|$)|[{}]\s*$|^\s*(?:def|fun|function|class|import|const|let|var|return)\s""")
++
++        fun of(content: CharSequence): ClipPreview {
++            val clean = sanitize(content)
++            val trimmed = clean.trim()
++            if (url.matches(trimmed)) {
++                return ClipPreview(trimmed.replace(scheme, "").removeSuffix("/"), Kind.URL)
++            }
++            val lines = trimmed.lines().map { it.trimEnd() }.filter { it.isNotBlank() }
++            val isCode = lines.isNotEmpty() && lines.take(5).any { isCodeLine(it) }
++            return if (isCode) {
++                ClipPreview(lines.joinToString("  ⏎  ") { it.trim().replace(Regex("""[ \t]{2,}"""), " ") }, Kind.CODE)
++            } else {
++                ClipPreview(trimmed.replace(Regex("""\s+"""), " "), Kind.TEXT)
++            }
++        }
++
++        private fun isCodeLine(line: String): Boolean {
++            val l = line.trimStart()
++            return shellStart.containsMatchIn(l) || (weakShellStart.containsMatchIn(l) && shellArg.containsMatchIn(l))
++                || codeMarks.containsMatchIn(line)
++        }
++
++        /** Drops control, bidi-override and zero-width characters and cuts on a code point boundary. */
++        private fun sanitize(content: CharSequence): String {
++            val sb = StringBuilder()
++            var i = 0
++            var count = 0
++            val s = content.toString()
++            while (i < s.length && count < MAX_CODE_POINTS) {
++                val cp = s.codePointAt(i)
++                i += Character.charCount(cp)
++                count++
++                when {
++                    cp == '\n'.code || cp == '\t'.code -> sb.appendCodePoint(cp)
++                    cp == '\r'.code -> {}
++                    Character.isISOControl(cp) -> sb.append(' ')
++                    cp in 0x202A..0x202E || cp in 0x2066..0x2069 || cp == 0x200B || cp == 0xFEFF -> {}
++                    else -> sb.appendCodePoint(cp)
++                }
++            }
++            if (i < s.length) sb.append('…')
++            return sb.toString()
++        }
++    }
++}
 diff --git a/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt b/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt
-index 5480eb2..653ba05 100644
+index 5480eb2..efbed1f 100644
 --- a/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt
 +++ b/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt
-@@ -60,6 +60,7 @@ class ClipboardHistoryManager(
+@@ -32,6 +32,7 @@ import helium314.keyboard.latin.settings.Defaults
+ import helium314.keyboard.latin.settings.Settings
+ import helium314.keyboard.latin.utils.InputTypeUtils
+ import helium314.keyboard.latin.utils.Log
++import helium314.keyboard.latin.utils.dpToPx
+ import helium314.keyboard.latin.utils.ToolbarKey
+ import helium314.keyboard.latin.utils.prefs
+ import kotlinx.coroutines.GlobalScope
+@@ -60,6 +61,7 @@ class ClipboardHistoryManager(
      }
  
      override fun onPrimaryClipChanged() {
@@ -546,8 +702,149 @@ index 5480eb2..653ba05 100644
          // Make sure we read clipboard content only if history settings is set
          if (latinIME.mSettings.current.mClipboardHistoryEnabled) {
              fetchPrimaryClip()
+@@ -201,15 +203,30 @@ class ClipboardHistoryManager(
+         val binding = ClipboardSuggestionBinding.inflate(LayoutInflater.from(latinIME), parent, false)
+         val textView = binding.clipboardSuggestionText
+         val clipIcon = KeyboardIconsSet.instance.getIconDrawable(ToolbarKey.PASTE.name.lowercase())
+-        clipIcon?.setBounds(0, 0, textView.lineHeight, textView.lineHeight) // scale the icon to the text
++        val iconSize = (textView.lineHeight * 0.85f).toInt()
++        clipIcon?.setBounds(0, 0, iconSize, iconSize)
+         textView.setCompoundDrawablesRelative(clipIcon, null, null, null)
++        val stripWidth = parent.width.takeIf { it > 0 } ?: latinIME.resources.displayMetrics.widthPixels
++        textView.maxWidth = stripWidth - (if (hasImage) 180 else 110).dpToPx(latinIME.resources)
+         val inputType = editorInfo?.inputType ?: InputType.TYPE_NULL
+         if (hasText) {
+             if (TextUtils.isEmpty(content)) return null
+             if (InputTypeUtils.isNumberInputType(inputType) && !content.isValidNumber()) return null
+-            val shortenedContent = content.take(200) // for display only
+             KeyboardTypeface.applyToTextView(textView)
+-            textView.text = (if (isClipSensitive(inputType)) "*".repeat(shortenedContent.length) else shortenedContent)
++            if (isClipSensitive(inputType)) {
++                textView.text = "\u2022".repeat(8)
++            } else {
++                val preview = ClipPreview.of(content)
++                textView.text = preview.text
++                when (preview.kind) {
++                    ClipPreview.Kind.URL -> textView.ellipsize = TextUtils.TruncateAt.MIDDLE
++                    ClipPreview.Kind.CODE -> {
++                        textView.typeface = android.graphics.Typeface.MONOSPACE
++                        textView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textView.textSize * 0.92f)
++                    }
++                    ClipPreview.Kind.TEXT -> {}
++                }
++            }
+         }
+         val onClickListener = View.OnClickListener {
+             dontShowCurrentSuggestion = true
+@@ -236,8 +253,6 @@ class ClipboardHistoryManager(
+ 
+         val closeButton = binding.clipboardSuggestionClose
+         closeButton.setImageDrawable(KeyboardIconsSet.instance.getIconDrawable(ToolbarKey.CLOSE_HISTORY.name.lowercase()))
+-        closeButton.layoutParams.width = textView.lineHeight // scale the icon to the text
+-        closeButton.layoutParams.height = textView.lineHeight
+         closeButton.setOnClickListener { removeClipboardSuggestion() }
+ 
+         val colors = latinIME.mSettings.current.mColors
+diff --git a/app/src/main/java/helium314/keyboard/latin/ImeNavBarFill.kt b/app/src/main/java/helium314/keyboard/latin/ImeNavBarFill.kt
+new file mode 100644
+index 0000000..781e98d
+--- /dev/null
++++ b/app/src/main/java/helium314/keyboard/latin/ImeNavBarFill.kt
+@@ -0,0 +1,92 @@
++// SPDX-License-Identifier: GPL-3.0-only
++// phonectl Keyboard. See phonectl/keyboard/README.md.
++
++package helium314.keyboard.latin
++
++import android.graphics.Canvas
++import android.graphics.ColorFilter
++import android.graphics.Paint
++import android.graphics.PixelFormat
++import android.graphics.drawable.Drawable
++import android.os.Build
++import android.view.View
++import android.view.ViewTreeObserver
++import android.view.Window
++
++/**
++ * Paints the navigation bar area below the keyboard in the keyboard's own background colour.
++ *
++ * Apps targeting Android 15+ are edge-to-edge: Window.setNavigationBarColor is ignored, and the
++ * gesture handle / IME back and switcher buttons sit in a frame with no background. Without this
++ * the app behind the keyboard shows through that 48 dp band (blended with a translucent scrim).
++ * The window background only draws from the bottom of the input view down, so nothing is
++ * painted over the app above the keyboard.
++ */
++object ImeNavBarFill {
++    private var fill: BottomFill? = null
++    private var observed: View? = null
++    private val listener = ViewTreeObserver.OnGlobalLayoutListener { update() }
++
++    @JvmStatic
++    fun apply(window: Window?, inputView: View?, color: Int, enabled: Boolean) {
++        if (window == null || inputView == null) return
++        if (!enabled) {
++            if (fill != null) window.setBackgroundDrawable(null)
++            detach()
++            fill = null
++            return
++        }
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
++        val f = fill ?: BottomFill().also { fill = it }
++        f.color = color
++        if (window.decorView.background !== f) window.setBackgroundDrawable(f)
++        if (observed !== inputView) {
++            detach()
++            observed = inputView
++            inputView.viewTreeObserver.addOnGlobalLayoutListener(listener)
++        }
++        update()
++    }
++
++    private fun detach() {
++        observed?.viewTreeObserver?.let { if (it.isAlive) it.removeOnGlobalLayoutListener(listener) }
++        observed = null
++    }
++
++    private fun update() {
++        val view = observed ?: return
++        val f = fill ?: return
++        if (!view.isAttachedToWindow) return
++        val loc = IntArray(2)
++        view.getLocationInWindow(loc)
++        val top = loc[1] + view.height
++        if (top != f.top) {
++            f.top = top
++            f.invalidateSelf()
++        }
++    }
++
++    private class BottomFill : Drawable() {
++        private val paint = Paint()
++        var top = Int.MAX_VALUE
++        var color: Int
++            get() = paint.color
++            set(value) {
++                if (paint.color != value) {
++                    paint.color = value
++                    invalidateSelf()
++                }
++            }
++
++        override fun draw(canvas: Canvas) {
++            val b = bounds
++            if (top >= b.bottom) return
++            canvas.drawRect(b.left.toFloat(), top.coerceAtLeast(b.top).toFloat(), b.right.toFloat(), b.bottom.toFloat(), paint)
++        }
++
++        override fun setAlpha(alpha: Int) {}
++        override fun setColorFilter(colorFilter: ColorFilter?) {}
++        @Deprecated("Deprecated in Java")
++        override fun getOpacity() = PixelFormat.TRANSLUCENT
++    }
++}
 diff --git a/app/src/main/java/helium314/keyboard/latin/LatinIME.java b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
-index 4b3e35b..e7aca76 100644
+index 4b3e35b..97c16c8 100644
 --- a/app/src/main/java/helium314/keyboard/latin/LatinIME.java
 +++ b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
 @@ -26,6 +26,7 @@ import android.util.PrintWriterPrinter;
@@ -590,7 +887,7 @@ index 4b3e35b..e7aca76 100644
          mDictionaryFacilitator.closeDictionaries();
          mSettings.onDestroy();
          if (foldableObserver != null)
-@@ -770,6 +775,7 @@ public class LatinIME extends InputMethodService implements
+@@ -770,11 +775,18 @@ public class LatinIME extends InputMethodService implements
  
      @Override
      public void setInputView(final View view) {
@@ -598,7 +895,26 @@ index 4b3e35b..e7aca76 100644
          super.setInputView(view);
          mInputView = view;
          mInsetsUpdater = ViewOutlineProviderUtilsKt.setInsetsOutlineProvider(view);
-@@ -1051,6 +1057,7 @@ public class LatinIME extends InputMethodService implements
+         KtxKt.updateSoftInputWindowLayoutParameters(this, mInputView);
+         updateSuggestionStripView(view);
++        updateNavBarFill();
++    }
++
++    private void updateNavBarFill() {
++        final SettingsValues sv = mSettings.getCurrent();
++        ImeNavBarFill.apply(getWindow().getWindow(), mInputView, sv.mColors.get(ColorType.MAIN_BACKGROUND), !sv.mIsFloatingKeyboard);
+     }
+ 
+     public void updateSuggestionStripView(View view) {
+@@ -1024,6 +1036,7 @@ public class LatinIME extends InputMethodService implements
+             if (mInputView != null && Settings.getValues().mIsFloatingKeyboard)
+                 FloatingKeyboardUtils.setFloating(mInputView);
+             setNavigationBarColor();
++            updateNavBarFill();
+             workaroundForHuaweiStatusBarIssue();
+         }
+     }
+@@ -1051,6 +1064,7 @@ public class LatinIME extends InputMethodService implements
      }
  
      void onFinishInputViewInternal(final boolean finishingInput) {
@@ -606,7 +922,7 @@ index 4b3e35b..e7aca76 100644
          super.onFinishInputView(finishingInput);
          Log.i(TAG, "onFinishInputView");
          cleanupInternalStateForFinishInput();
-@@ -1428,6 +1435,11 @@ public class LatinIME extends InputMethodService implements
+@@ -1428,6 +1442,11 @@ public class LatinIME extends InputMethodService implements
      // This method is public for testability of LatinIME, but also in the future it should
      // completely replace #onCodeInput.
      public void onEvent(@NonNull final Event event) {
@@ -618,7 +934,7 @@ index 4b3e35b..e7aca76 100644
          if (KeyCode.VOICE_INPUT == event.getKeyCode()) {
              mRichImm.switchToShortcutIme(this);
          }
-@@ -1441,6 +1453,10 @@ public class LatinIME extends InputMethodService implements
+@@ -1441,6 +1460,10 @@ public class LatinIME extends InputMethodService implements
  
      public void onTextInput(@Nullable String rawText) {
          if (rawText == null) return;
@@ -629,7 +945,7 @@ index 4b3e35b..e7aca76 100644
          // TODO: have the keyboard pass the correct key code when we need it.
          Event event = Event.createSoftwareTextEvent(rawText, KeyCode.MULTIPLE_CODE_POINTS, null);
          InputTransaction completeInputTransaction = mInputLogic.onTextInput(mSettings.getCurrent(),
-@@ -1451,15 +1467,18 @@ public class LatinIME extends InputMethodService implements
+@@ -1451,15 +1474,18 @@ public class LatinIME extends InputMethodService implements
      }
  
      public void onStartBatchInput() {
@@ -648,7 +964,7 @@ index 4b3e35b..e7aca76 100644
          mInputLogic.onEndBatchInput(batchPointers);
          mGestureConsumer.onGestureCompleted(batchPointers);
      }
-@@ -1750,9 +1769,24 @@ public class LatinIME extends InputMethodService implements
+@@ -1750,9 +1776,24 @@ public class LatinIME extends InputMethodService implements
      }
  
      public void launchEmojiSearch() {
@@ -866,7 +1182,7 @@ index 406e3cc..2fe12e8 100644
      }
  
 diff --git a/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt b/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt
-index b5fd76e..8a671ea 100644
+index b5fd76e..fee8634 100644
 --- a/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt
 +++ b/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt
 @@ -12,7 +12,7 @@ import helium314.keyboard.latin.BuildConfig
@@ -937,7 +1253,15 @@ index b5fd76e..8a671ea 100644
      const val PREF_SHOW_POPUP_HINTS = false
      const val PREF_SHOW_TLD_POPUP_KEYS = true
      const val PREF_MORE_POPUP_KEYS = "main"
-@@ -168,7 +170,7 @@ object Defaults {
+@@ -161,14 +163,14 @@ object Defaults {
+     const val PREF_TOUCHPAD_SENSITIVITY = 50
+     const val PREF_TOUCHPAD_EDGE_SCROLL = true
+     const val PREF_ENABLE_CLIPBOARD_HISTORY = true
+-    const val PREF_CLIPBOARD_HISTORY_RETENTION_TIME = 10 // minutes
++    const val PREF_CLIPBOARD_HISTORY_RETENTION_TIME = 60 // minutes, like Gboard
+     const val PREF_CLIPBOARD_HISTORY_PINNED_FIRST = true
+     const val PREF_CLIPBOARD_USE_FILES = true
+     const val PREF_CLIPBOARD_FILES_SIZE_LIMIT = 20 // megabytes
      const val PREF_ADD_TO_PERSONAL_DICTIONARY = false
      @JvmField
      val PREF_NAVBAR_COLOR = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -1160,39 +1484,64 @@ index 158b30e..3a3c5e7 100644
      <!-- Toggle keys. Use checkable/checked state. -->
      <item android:state_checkable="true" android:state_checked="true" android:state_pressed="true"
 diff --git a/app/src/main/res/layout/clipboard_suggestion.xml b/app/src/main/res/layout/clipboard_suggestion.xml
-index 96cac99..c26df4d 100644
+index 96cac99..213b3be 100644
 --- a/app/src/main/res/layout/clipboard_suggestion.xml
 +++ b/app/src/main/res/layout/clipboard_suggestion.xml
-@@ -4,7 +4,6 @@
+@@ -3,41 +3,42 @@
+     xmlns:tools="http://schemas.android.com/tools"
      android:orientation="horizontal"
      android:background="@drawable/clipboard_suggestion_background"
-     android:gravity="center"
+-    android:gravity="center"
 -    android:paddingEnd="12dp"
++    android:gravity="center_vertical"
      android:layout_width="wrap_content"
      android:layout_height="match_parent"
      tools:ignore="RtlSymmetry">
-@@ -14,8 +13,8 @@
-         android:layout_weight="1"
+     <TextView
+         android:id="@+id/clipboard_suggestion_text"
+-        android:layout_width="0dp"
+-        android:layout_weight="1"
++        android:layout_width="wrap_content"
          android:layout_height="match_parent"
-         android:drawablePadding="3dp"
+-        android:drawablePadding="3dp"
 -        android:paddingStart="12dp"
 -        android:paddingEnd="6dp"
-+        android:paddingStart="36dp"
-+        android:paddingEnd="0dp"
++        android:drawablePadding="8dp"
++        android:paddingStart="17dp"
++        android:paddingEnd="2dp"
          android:hapticFeedbackEnabled="false"
          android:soundEffectsEnabled="false"
          android:singleLine="true"
-@@ -36,8 +35,11 @@
+-        android:gravity="center"
++        android:gravity="center_vertical|start"
++        android:textDirection="locale"
+         android:ellipsize="end"
+-        android:textStyle="bold"
+         style="?android:attr/textAppearanceSmall" />
+     <ImageView
+         android:id="@+id/clipboard_suggestion_image"
+         android:adjustViewBounds="true"
+-        android:paddingVertical="6dp"
+-        android:paddingEnd="6dp"
++        android:paddingVertical="9dp"
++        android:paddingStart="4dp"
+         android:layout_width="wrap_content"
+-        android:layout_height="wrap_content"
++        android:layout_height="match_parent"
+         android:visibility="gone"
+         android:scaleType="centerInside" />
+     <ImageView
          android:id="@+id/clipboard_suggestion_close"
          android:contentDescription="@string/spoken_clipboard_suggestion"
          android:src="@drawable/ic_close"
 -        android:layout_width="wrap_content"
-+        android:layout_width="32dp"
-         android:layout_height="wrap_content"
+-        android:layout_height="wrap_content"
 -        android:gravity="center" />
-+        android:layout_marginEnd="4dp"
-+        android:padding="4dp"
-+        android:layout_gravity="center_vertical"
++        android:layout_width="38dp"
++        android:layout_height="match_parent"
++        android:layout_marginEnd="5dp"
++        android:paddingVertical="13dp"
++        android:paddingHorizontal="11dp"
 +        android:scaleType="centerInside" />
  
  </LinearLayout>
