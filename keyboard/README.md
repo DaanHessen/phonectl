@@ -31,6 +31,21 @@ What the patch changes (`patches/0001-phonectl-bridge.patch`):
   `com.daanh.phonectl.keyboard.*`, so stock HeliBoard can be installed next
   to it.
 
+* Gboard-like defaults, measured from Gboard 16.0 on the owner's phone
+  (Nothing A069P, 1260x2800, 440 dpi): keyboard 242dp plus a 46dp strip
+  (924 px IME with the system's 48dp nav area, the same as Gboard),
+  46.9dp keys, 12dp row gap, about 6dp key gap, 6dp corners, a pill enter
+  key, flat keys with no bevel, letters at 50% of the key height, number
+  hints on the top row only. Rounded style with key backgrounds and
+  Material You colours (light/dark follow the system; at night the board
+  is darker than the function keys, which are darker than the letters).
+  Emoji key on the bottom row; the toolbar shows when nothing is typed
+  (clipboard, emoji, undo, redo, select all, settings, voice). One
+  English (UK) layout that also types Dutch.
+* `AppUpgrade.kt`: on the first update to a build with a new look version
+  (`phonectl_look`), the look and size prefs are reset once so existing
+  installs get these defaults. Languages and other prefs are kept.
+
 Everything else is HeliBoard as released. HeliBoard's own clipboard-history
 setting does not affect the sync.
 
