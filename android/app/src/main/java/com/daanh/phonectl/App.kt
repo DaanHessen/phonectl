@@ -15,6 +15,7 @@ class App : Application() {
         super.onCreate()
         StatusMonitor.start(this)
         ClipSync.start(this)
+        Keyboard.init(this)
         NotifListener.init(this)
         PhoneControls.init(this)
         Updater.init(this)

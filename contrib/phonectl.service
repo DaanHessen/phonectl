@@ -7,8 +7,12 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/phonectl daemon
+# Restart on any failure, but back off (5 s growing to 10 min) instead of
+# hammering every 5 s forever: a missing binary looped 5,700+ times in 2026-11.
 Restart=on-failure
 RestartSec=5s
+RestartSteps=8
+RestartMaxDelaySec=10min
 Environment=PHONECTL_LOG=info
 
 [Install]

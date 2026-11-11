@@ -117,16 +117,15 @@ phones: any Android 13+ phone and any Wayland desktop with systemd should work.
    git clone https://github.com/DaanHessen/phonectl.git
    cd phonectl
    ```
-2. Build the phone app and the laptop binary
+2. Build the phone app and the keyboard
    ```sh
    (cd android && ./gradlew assembleRelease)
-   cargo build --release
-   ln -sf "$PWD/target/release/phonectl" ~/.local/bin/phonectl
+   keyboard/build.sh
    ```
-3. Start the daemon
+3. Build, install and start the daemon (copies the binary to `~/.local/bin`
+   and the unit to `~/.config/systemd/user`; `--clean` frees the build cache)
    ```sh
-   cp contrib/phonectl.service ~/.config/systemd/user/
-   systemctl --user enable --now phonectl
+   scripts/install.sh
    ```
 4. Install, grant and pair the phone app, then turn Wireless debugging off again
    ```sh
@@ -165,6 +164,7 @@ phonectl test-notification    post a test notification on the phone
 phonectl events               live link events
 phonectl diag                 the phone app's own log, no ADB needed
 phonectl update               install a new app build over the link
+phonectl type TEXT [--key K]  type on the phone (phonectl Keyboard); `-` = stdin
 ```
 
 **How it connects.** The laptop listens only on its Tailscale address and the
@@ -176,7 +176,8 @@ so the phone reconnects at once instead of waiting for its backoff, and tells
 the phone before it suspends so the phone stays quiet meanwhile.
 
 **Known limits (Android, not bugs).**
-* Automatic phone → laptop clipboard needs one tap after every phone reboot or app update. Android only lets the focused app read the clipboard, so phonectl spots changes in the system log and briefly focuses an invisible activity to read them (like KDE Connect). Android 13+ asks for log-access consent, but only shows that prompt to an app on screen, so after a restart a quiet notification asks for a tap. Until then, share text to "Send to laptop" or use the Quick Settings tile.
+* Automatic phone → laptop clipboard needs phonectl Keyboard (`keyboard/`) as the phone's keyboard: Android 10+ lets only the focused app and the default keyboard read the clipboard. See `docs/redesign-2026-11.md`. Without it, the old fallback below applies.
+* Fallback without the keyboard: automatic phone → laptop clipboard needs one tap after every phone reboot or app update. Android only lets the focused app read the clipboard, so phonectl spots changes in the system log and briefly focuses an invisible activity to read them (like KDE Connect). Android 13+ asks for log-access consent, but only shows that prompt to an app on screen, so after a restart a quiet notification asks for a tap. Until then, share text to "Send to laptop" or use the Quick Settings tile.
 * Replies to messages are not possible from the laptop yet (mako has no text input); other notification actions work.
 * Wi-Fi Direct is not used: Android asks the user to accept every connection, and Bluetooth is enough for this little data.
 

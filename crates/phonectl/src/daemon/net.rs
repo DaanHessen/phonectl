@@ -158,6 +158,46 @@ pub async fn poke_burst(daemon: Shared, why: &str) {
     }
 }
 
+/// While the phone is away, one quiet poke every few minutes. The phone's own
+/// retry timers run on its uptime clock, which stops in deep sleep, so after a
+/// drop in Doze it could otherwise stay away until someone picks it up (gaps of
+/// 18-60 min were seen in the journal). A poke is one ~60-byte UDP packet; it
+/// reaches a dozing phone through Tailscale's VPN service, and phonectl (battery
+/// unrestricted) may then use the network and hold its connect wakelock.
+/// Nothing is sent while connected or while the laptop is suspended.
+pub async fn keep_poking(daemon: Shared) {
+    let mut away_since: Option<Instant> = None;
+    loop {
+        // 1 min checks; poke every 2 min for the first 10 min away, then every 5.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        if daemon.sessions.current().is_some() {
+            away_since = None;
+            continue;
+        }
+        let since = *away_since.get_or_insert_with(Instant::now);
+        let away = since.elapsed().as_secs() / 60;
+        let every = if away < 10 { 2 } else { 5 };
+        if away == 0 || away % every != 0 {
+            continue;
+        }
+        let (asleep, ip) = {
+            let state = daemon.state.lock().unwrap();
+            (state.asleep, state.phone.tailscale_ip.clone())
+        };
+        if asleep || !daemon.state.lock().unwrap().listening {
+            continue;
+        }
+        let Some(ip) = ip.and_then(|ip| ip.parse::<IpAddr>().ok()) else { continue };
+        let packet = link::poke_packet(&daemon.key, now_millis() as u64);
+        if let Ok(socket) = UdpSocket::bind("0.0.0.0:0").await {
+            match socket.send_to(&packet, SocketAddr::new(ip, link::POKE_PORT)).await {
+                Ok(_) => tracing::debug!("retry poke ({away} min away)"),
+                Err(e) => tracing::debug!("retry poke: {e}"),
+            }
+        }
+    }
+}
+
 /// Listens for link and address changes over rtnetlink. Each burst of changes
 /// (debounced) pokes the phone when we are not connected, and wakes the
 /// listener if it is still waiting for Tailscale.

@@ -33,6 +33,12 @@ import java.io.InputStreamReader
  * used as the background-activity-start exemption; no overlay is ever drawn).
  * This is the same mechanism KDE Connect uses on Android 10+.
  *
+ * Preferred path (2026-11 redesign): phonectl Keyboard. When it is the
+ * selected keyboard it is allowed to read every clip and forwards it through
+ * [KeyboardBridge]; the log watcher below is then not started at all, so
+ * there is no consent prompt and nothing to tap after a reboot. The log
+ * watcher stays as the fallback for when another keyboard is in use.
+ *
  * When either grant is missing, phone → laptop still works manually: the
  * share sheet ("phonectl"), the Quick Settings tile, or opening the app.
  *
@@ -80,14 +86,26 @@ object ClipSync : Link.Feature {
         private set
     @Volatile private var process: Process? = null
 
-    fun autoAvailable(): Boolean =
-        ::context.isInitialized && logAccess && Settings.canDrawOverlays(context)
+    fun autoAvailable(): Boolean = mode() != "manual"
+
+    /** How phone → laptop clips are picked up: "keyboard", "logcat" or "manual". */
+    fun mode(): String = when {
+        !::context.isInitialized -> "manual"
+        Keyboard.isDefault(context) -> "keyboard"
+        logAccess && Settings.canDrawOverlays(context) -> "logcat"
+        else -> "manual"
+    }
 
     private fun hasReadLogs() = context.checkSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
 
     /** Starts the log watcher unless it is already running with system log access. */
     fun startWatcher() {
         if (!hasReadLogs()) return
+        if (Keyboard.isDefault(context)) {
+            // The keyboard sees every clip; no logcat, no consent prompt.
+            SetupNotice.clear(context)
+            return
+        }
         if (watcher?.isAlive == true && logAccess) return
         if (watcher?.isAlive == true) {
             // Running but declined (started in the background): restart now

@@ -266,7 +266,9 @@ object StatusMonitor : Link.Feature {
             .put("phone_state", granted(Manifest.permission.READ_PHONE_STATE))
             .put("bluetooth", granted(Manifest.permission.BLUETOOTH_CONNECT))
             .put("notifications", NotifListener.connected)
-            .put("clipboard_auto", ClipSync.autoAvailable()))
+            .put("clipboard_auto", ClipSync.autoAvailable())
+            .put("clipboard_mode", ClipSync.mode())
+            .put("keyboard", Keyboard.isDefault()))
 
     private fun granted(p: String) = context.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 

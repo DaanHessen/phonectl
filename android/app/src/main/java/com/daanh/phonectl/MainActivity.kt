@@ -132,7 +132,18 @@ class MainActivity : Activity() {
         check("Display over other apps", "Lets automatic clipboard sync read a new clip", Settings.canDrawOverlays(this)) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
-        if (!granted(Manifest.permission.READ_LOGS)) {
+        val keyboardActive = Keyboard.isDefault(this)
+        check("phonectl Keyboard", if (Keyboard.installed(this)) "Select it as your keyboard: copies on the phone reach the laptop by themselves" else "Install phonectl Keyboard for automatic phone → laptop clipboard", keyboardActive) {
+            if (Keyboard.installed(this)) {
+                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                toast("Turn on phonectl Keyboard, then pick it with the keyboard switcher")
+            } else {
+                toast("Install phonectl Keyboard from the phone store first")
+            }
+        }
+        if (keyboardActive) {
+            // Nothing else needed for the clipboard.
+        } else if (!granted(Manifest.permission.READ_LOGS)) {
             check("Clipboard log access", "One-time over ADB: phonectl setup does it", false) {
                 toast("Run on the laptop: phonectl setup")
             }

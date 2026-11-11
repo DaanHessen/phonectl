@@ -1,0 +1,224 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 0d4dcaf..db79bb5 100755
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -10,14 +10,14 @@ android {
+     compileSdk = 37
+ 
+     defaultConfig {
+-        applicationId = "helium314.keyboard"
++        applicationId = "com.daanh.phonectl.keyboard"
+         minSdk = 21
+         targetSdk = 37
+         versionCode = 4201
+-        versionName = "4.2"
++        versionName = "4.2-phonectl"
+         ndk {
+             abiFilters.clear()
+-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
++            abiFilters.addAll(listOf("arm64-v8a"))
+         }
+         proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+     }
+@@ -28,6 +28,8 @@ android {
+             isShrinkResources = false
+             isDebuggable = false
+             isJniDebuggable = false
++            // phonectl: same key as the phonectl app (the bridge permission is signature-level)
++            signingConfig = signingConfigs.getByName("debug")
+         }
+         create("nouserlib") { // same as release, but does not allow the user to provide a library
+             isMinifyEnabled = true
+@@ -83,7 +85,7 @@ android {
+             path = File("src/main/jni/Android.mk")
+         }
+     }
+-    ndkVersion = "28.0.13004108"
++    ndkVersion = "28.2.13676358"
+ 
+     packaging {
+         jniLibs {
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index d50a3c9..72c413e 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -8,13 +8,22 @@ SPDX-License-Identifier: Apache-2.0 AND GPL-3.0-only
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:tools="http://schemas.android.com/tools">
+ 
++    <!-- phonectl: shared with the phonectl app (same signing key). -->
++    <permission
++        android:name="com.daanh.phonectl.permission.BRIDGE"
++        android:protectionLevel="signature" />
++    <uses-permission android:name="com.daanh.phonectl.permission.BRIDGE" />
++    <queries>
++        <package android:name="com.daanh.phonectl" />
++    </queries>
++
+     <uses-permission android:name="android.permission.READ_USER_DICTIONARY" />
+     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+     <uses-permission android:name="android.permission.VIBRATE" />
+     <uses-permission android:name="android.permission.WRITE_USER_DICTIONARY" />
+     <uses-permission android:name="android.permission.READ_CONTACTS" />
+ 
+-    <application android:label="@string/english_ime_name"
++    <application android:label="phonectl Keyboard"
+             android:name="helium314.keyboard.latin.App"
+             android:icon="@mipmap/ic_launcher"
+             android:roundIcon="@mipmap/ic_launcher_round"
+@@ -29,7 +38,7 @@ SPDX-License-Identifier: Apache-2.0 AND GPL-3.0-only
+ 
+         <!-- Services -->
+         <service android:name="LatinIME"
+-                android:label="@string/english_ime_name"
++                android:label="phonectl Keyboard"
+                 android:permission="android.permission.BIND_INPUT_METHOD"
+                 android:directBootAware="true"
+                 android:exported="true">
+diff --git a/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt b/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt
+index 5480eb2..653ba05 100644
+--- a/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt
++++ b/app/src/main/java/helium314/keyboard/latin/ClipboardHistoryManager.kt
+@@ -60,6 +60,7 @@ class ClipboardHistoryManager(
+     }
+ 
+     override fun onPrimaryClipChanged() {
++        if (!tempPrimaryClip) PhonectlBridge.onClipChanged(latinIME, clipboardManager)
+         // Make sure we read clipboard content only if history settings is set
+         if (latinIME.mSettings.current.mClipboardHistoryEnabled) {
+             fetchPrimaryClip()
+diff --git a/app/src/main/java/helium314/keyboard/latin/LatinIME.java b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
+index 4b3e35b..8f915b0 100644
+--- a/app/src/main/java/helium314/keyboard/latin/LatinIME.java
++++ b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
+@@ -559,6 +559,7 @@ public class LatinIME extends InputMethodService implements
+ 
+         loadSettings();
+         mClipboardHistoryManager.onCreate();
++        PhonectlBridge.INSTANCE.onCreate(this);
+         mHandler.onCreate();
+         if (FoldableUtils.INSTANCE.isFoldable())
+             foldableObserver = new FoldableUtils.FoldableObserver(this);
+@@ -706,6 +707,7 @@ public class LatinIME extends InputMethodService implements
+     @Override
+     public void onDestroy() {
+         mClipboardHistoryManager.onDestroy();
++        PhonectlBridge.INSTANCE.onDestroy(this);
+         mDictionaryFacilitator.closeDictionaries();
+         mSettings.onDestroy();
+         if (foldableObserver != null)
+diff --git a/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt b/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt
+new file mode 100644
+index 0000000..e853617
+--- /dev/null
++++ b/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt
+@@ -0,0 +1,109 @@
++// SPDX-License-Identifier: GPL-3.0-only
++// phonectl Keyboard: the only addition to HeliBoard. See phonectl/keyboard/README.md.
++
++package helium314.keyboard.latin
++
++import android.content.BroadcastReceiver
++import android.content.ClipboardManager
++import android.content.ComponentName
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
++import android.view.KeyEvent
++import androidx.core.content.ContextCompat
++import helium314.keyboard.latin.utils.Log
++
++/**
++ * Links this keyboard to the phonectl app (same signing key).
++ *
++ * Clipboard: as the default input method this keyboard may read the clipboard
++ * from the background (Android 10+ allows only the focused app and the default
++ * IME). Every new text clip is handed to phonectl, which sends it to the
++ * laptop. Clips marked sensitive (passwords, OTPs) and clips phonectl itself
++ * wrote (marked as coming from a remote device) are never forwarded.
++ *
++ * Typing: phonectl can ask the keyboard to type text or press a key in the
++ * focused field, so the laptop keyboard can type on the phone.
++ *
++ * Both directions use explicit broadcasts guarded by a signature permission.
++ */
++object PhonectlBridge {
++    private const val TAG = "PhonectlBridge"
++    private const val PHONECTL = "com.daanh.phonectl"
++    private const val PERMISSION = "com.daanh.phonectl.permission.BRIDGE"
++    private const val ACTION_CLIP = "com.daanh.phonectl.action.CLIP"
++    private const val ACTION_TYPE = "com.daanh.phonectl.action.TYPE"
++    private const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
++    private const val EXTRA_IS_REMOTE_DEVICE = "android.content.extra.IS_REMOTE_DEVICE"
++    /** Binder transactions cap out near 1 MB; UTF-16 doubles the size. */
++    private const val MAX_CHARS = 200_000
++
++    private var receiver: BroadcastReceiver? = null
++
++    fun onCreate(ime: LatinIME) {
++        val r = object : BroadcastReceiver() {
++            override fun onReceive(context: Context, intent: Intent) {
++                if (intent.action != ACTION_TYPE) return
++                try {
++                    type(ime, intent.getStringExtra("text"), intent.getStringExtra("key"))
++                } catch (e: Exception) {
++                    Log.w(TAG, "type failed", e)
++                }
++            }
++        }
++        ContextCompat.registerReceiver(ime, r, IntentFilter(ACTION_TYPE), PERMISSION, null, ContextCompat.RECEIVER_EXPORTED)
++        receiver = r
++    }
++
++    fun onDestroy(ime: LatinIME) {
++        receiver?.let { try { ime.unregisterReceiver(it) } catch (_: Exception) {} }
++        receiver = null
++    }
++
++    /** Called for every primary clip change, whether or not clipboard history is on. */
++    fun onClipChanged(context: Context, clipboard: ClipboardManager) {
++        val text = try {
++            val clip = clipboard.primaryClip ?: return
++            if (clip.itemCount == 0) return
++            val extras = clip.description?.extras
++            if (extras?.getBoolean(EXTRA_IS_SENSITIVE) == true) return
++            if (extras?.getBoolean(EXTRA_IS_REMOTE_DEVICE) == true) return
++            clip.getItemAt(0)?.coerceToText(context)?.toString() ?: return
++        } catch (e: Exception) {
++            Log.w(TAG, "cannot read clip", e)
++            return
++        }
++        if (text.isEmpty() || text.length > MAX_CHARS) return
++        val intent = Intent(ACTION_CLIP)
++            .setComponent(ComponentName(PHONECTL, "$PHONECTL.KeyboardBridge"))
++            .putExtra("text", text)
++            .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
++        try {
++            context.sendBroadcast(intent, PERMISSION)
++        } catch (e: Exception) {
++            Log.w(TAG, "cannot hand clip to phonectl", e)
++        }
++    }
++
++    private fun type(ime: LatinIME, text: String?, key: String?) {
++        val ic = ime.currentInputConnection ?: return
++        if (!text.isNullOrEmpty()) {
++            ic.finishComposingText()
++            ic.commitText(text, 1)
++        }
++        when (key) {
++            null, "" -> {}
++            "enter" -> if (!ime.sendDefaultEditorAction(true)) ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
++            "newline" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
++            "backspace" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
++            "delete" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_FORWARD_DEL)
++            "tab" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_TAB)
++            "left" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
++            "right" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
++            "up" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP)
++            "down" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN)
++            "escape" -> ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_ESCAPE)
++            else -> Log.w(TAG, "unknown key $key")
++        }
++    }
++}

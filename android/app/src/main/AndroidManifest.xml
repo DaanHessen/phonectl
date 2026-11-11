@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Shared with phonectl Keyboard (same signing key): clips in, typing out. -->
+    <permission
+        android:name="com.daanh.phonectl.permission.BRIDGE"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.daanh.phonectl.permission.BRIDGE" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -78,6 +84,15 @@
         </service>
 
         <receiver android:name=".UpdateReceiver" android:exported="false" />
+
+        <receiver
+            android:name=".KeyboardBridge"
+            android:exported="true"
+            android:permission="com.daanh.phonectl.permission.BRIDGE">
+            <intent-filter>
+                <action android:name="com.daanh.phonectl.action.CLIP" />
+            </intent-filter>
+        </receiver>
 
         <receiver android:name=".BootReceiver" android:exported="false">
             <intent-filter>

@@ -189,6 +189,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     tokio::spawn(clipboard::watch(daemon.clone()));
     tokio::spawn(notify::watch_signals(daemon.clone()));
     tokio::spawn(sleep::watch(daemon.clone()));
+    tokio::spawn(net::keep_poking(daemon.clone()));
 
     // The phone may be backing off after our restart: tell it we are here.
     net::poke_burst(daemon.clone(), "startup").await;

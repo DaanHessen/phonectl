@@ -54,6 +54,15 @@ enum Command {
     Ringer { mode: String },
     /// Control media playing on the phone: toggle, play, pause, next, previous.
     Media { action: String },
+    /// Type on the phone (needs phonectl Keyboard as the phone's keyboard).
+    /// `phonectl type "hello"`, `phonectl type --key enter`, `echo hi | phonectl type -`.
+    Type {
+        /// Text to type into the focused field; `-` reads stdin.
+        text: Option<String>,
+        /// Then press a key: enter, newline, backspace, delete, tab, left, right, up, down, escape.
+        #[arg(long)]
+        key: Option<String>,
+    },
     /// Print the phone app's recent log (states and package names only).
     Diag,
     /// Post a test notification on the phone (to check mirroring).
@@ -202,6 +211,27 @@ async fn link_command(command: Command) -> anyhow::Result<u8> {
             Ok(exit::OK)
         }
         Command::TestNotification => phone_call("test_notification", serde_json::Value::Null).await,
+        Command::Type { text, key } => {
+            let text = match text.as_deref() {
+                Some("-") => {
+                    let mut buffer = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)?;
+                    Some(buffer)
+                }
+                other => other.map(str::to_string),
+            };
+            if text.as_deref().is_none_or(str::is_empty) && key.is_none() {
+                anyhow::bail!("nothing to type: give TEXT, - (stdin) or --key");
+            }
+            let mut params = serde_json::Map::new();
+            if let Some(text) = text.filter(|t| !t.is_empty()) {
+                params.insert("text".into(), text.into());
+            }
+            if let Some(key) = key {
+                params.insert("key".into(), key.into());
+            }
+            phone_call("type_text", params.into()).await
+        }
         Command::Ring { stop } => phone_call("ring", serde_json::json!({"on": !stop})).await,
         Command::Ringer { mode } => phone_call("ringer", serde_json::json!({"mode": mode})).await,
         Command::Media { action } => {
@@ -287,6 +317,14 @@ fn print_status(s: &serde_json::Value) {
     }
     if let Some(call) = st["call"].as_str().filter(|c| *c != "idle") {
         println!("call       {call}");
+    }
+    if let Some(mode) = st["permissions"]["clipboard_mode"].as_str() {
+        let detail = match mode {
+            "keyboard" => "automatic both ways (phonectl Keyboard)",
+            "logcat" => "automatic both ways (log watcher; re-arm after phone reboots)",
+            _ => "laptop → phone only; select phonectl Keyboard on the phone",
+        };
+        println!("clipboard  {detail}");
     }
     println!("notifs     {}", s["notifications"]);
     if let Some(e) = s["error"].as_str() {

@@ -17,6 +17,21 @@ section.
   (`phonectl` is a working name).
 - Subagents: Sonnet or Haiku only.
 
+## 2026-11-11: redesign (keyboard, install, retry pokes)
+
+The link had been down since 2026-11-10 19:29: `target/` was deleted and
+`~/.local/bin/phonectl` was a symlink into it (5,765 restarts with
+203/EXEC). Fixed with `scripts/install.sh` (copies the binary) and unit
+backoff; the daemon was reinstalled and the phone reconnected on its own at
+13:01:56. Phone → laptop clipboard had fired once in two weeks (logcat
+consent), so it moves to phonectl Keyboard (HeliBoard v4.2 + patch,
+`keyboard/`). Laptop pokes every 2-5 min while the phone is away. Details,
+sources and tests: `docs/redesign-2026-11.md`.
+
+Open: build the keyboard APK (needs an OK to run HeliBoard's Gradle build),
+publish the app + keyboard to the phone store (owner's OK), then the
+one-time phone steps, and a real-device check of the keyboard path.
+
 ## 2026-10-01: direction change
 
 Wireless debugging only exists on Wi-Fi (Android switches it off when Wi-Fi

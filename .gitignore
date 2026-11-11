@@ -4,3 +4,5 @@
 
 # Raw device dumps: personal data, never publish
 /docs/research/device/
+/keyboard/upstream
+/keyboard/*.apk
