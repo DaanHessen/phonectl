@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 0d4dcaf..eb163e1 100755
+index 0d4dcaf..f6230cd 100755
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,14 +10,14 @@ android {
@@ -12,8 +12,8 @@ index 0d4dcaf..eb163e1 100755
          targetSdk = 37
 -        versionCode = 4201
 -        versionName = "4.2"
-+        versionCode = 4204
-+        versionName = "4.2.4"
++        versionCode = 4205
++        versionName = "4.2.5"
          ndk {
              abiFilters.clear()
 -            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -76,23 +76,109 @@ index d50a3c9..ed02c2f 100644
                  android:permission="android.permission.BIND_INPUT_METHOD"
                  android:directBootAware="true"
                  android:exported="true">
+diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
+index 33a9426..5f16cf1 100644
+--- a/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
++++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/EmojiSearchActivity.kt
+@@ -321,7 +321,7 @@ class EmojiSearchActivity : ComponentActivity() {
+             }
+ 
+             override fun getDescription(emoji: String): String? = if (Settings.getValues().mShowEmojiDescriptions)
+-                dictionaryFacilitator?.getWordProperty(getEmojiNeutralVersion(emoji))?.let {
++                dictionaryFacilitators.firstNotNullOfOrNull { f -> f.getWordProperty(getEmojiNeutralVersion(emoji)) }?.let {
+                     if (it.mHasShortcuts) it.mShortcutTargets[0]?.mWord else null
+                 } else null
+ 
+@@ -336,7 +336,7 @@ class EmojiSearchActivity : ComponentActivity() {
+ 
+     private fun search(text: String) {
+         initDictionaryFacilitator(this)
+-        if (dictionaryFacilitator == null) {
++        if (dictionaryFacilitators.isEmpty()) {
+             cancel()
+             return
+         }
+@@ -354,8 +354,15 @@ class EmojiSearchActivity : ComponentActivity() {
+         keyboard.removeAllKeys()
+         firstKey = null
+         pressedKey = null
+-        dictionaryFacilitator!!.getSuggestions(text.splitOnWhitespace()).filter { it.isEmoji }.forEach {
+-            val emoji = getEmojiDefaultVersion(it.word)
++        val words = text.splitOnWhitespace()
++        val found = LinkedHashMap<String, Int>()
++        dictionaryFacilitators.forEach { facilitator ->
++            facilitator.getSuggestions(words).filter { it.isEmoji }.forEach { info ->
++                val emoji = getEmojiDefaultVersion(info.word)
++                if (info.mScore > (found[emoji] ?: Int.MIN_VALUE)) found[emoji] = info.mScore
++            }
++        }
++        found.entries.sortedByDescending { it.value }.map { it.key }.forEach { emoji ->
+             val popupSpec = getEmojiPopupSpec(emoji)
+             val keyParams = Key.KeyParams(emoji, emoji.getCode(), if (popupSpec != null) EMOJI_HINT_LABEL else null, popupSpec,
+                 Key.LABEL_FLAGS_FONT_NORMAL, keyboardParams)
+@@ -387,7 +394,8 @@ class EmojiSearchActivity : ComponentActivity() {
+         const val IME_CLOSED_KEY: String = "IME_CLOSED"
+         const val EMOJI_KEY: String = "EMOJI"
+         private const val PRIVATE_IME_OPTIONS_PREFIX: String = "helium314.keyboard.keyboard.emoji.search"
+-        private var dictionaryFacilitator: SingleDictionaryFacilitator? = null
++        private var dictionaryFacilitators: List<SingleDictionaryFacilitator> = emptyList()
++        private var facilitatorKey: List<String> = emptyList()
+         private var searchText: String = ""
+ 
+         fun decodePrivateImeOptions(editorInfo: EditorInfo?): PrivateImeOptions = PrivateImeOptions(
+@@ -395,20 +403,27 @@ class EmojiSearchActivity : ComponentActivity() {
+                 ?.let { it.substring(PRIVATE_IME_OPTIONS_PREFIX.length + 1, it.indexOf(',')) }?.toInt() ?: 0)
+ 
+         fun closeDictionaryFacilitator() {
+-            dictionaryFacilitator?.closeDictionaries()
+-            dictionaryFacilitator = null
++            dictionaryFacilitators.forEach { it.closeDictionaries() }
++            dictionaryFacilitators = emptyList()
++            facilitatorKey = emptyList()
+         }
+ 
+         private fun encodePrivateImeOptions(privateImeOptions: PrivateImeOptions) =
+             "$PRIVATE_IME_OPTIONS_PREFIX.${privateImeOptions.height},"
+ 
++        /** Searches the dictionaries of the current subtype plus the bundled English and Dutch ones, so "heart" and "hart" both work. */
+         private fun initDictionaryFacilitator(context: Context) {
+-            val locale = RichInputMethodManager.getInstance().currentSubtype.locale
+-            if (dictionaryFacilitator?.isForLocale(locale) != true) {
+-                dictionaryFacilitator?.closeDictionaries()
+-                dictionaryFacilitator = DictionaryInfoUtils.getCachedDictForLocaleAndType(locale, Dictionary.TYPE_EMOJI, context)
+-                    ?.let { DictionaryFactory.getDictionary(it, locale) }?.let { SingleDictionaryFacilitator(it) }
++            val current = RichInputMethodManager.getInstance().currentSubtype.locale
++            val locales = listOf(current, java.util.Locale.ENGLISH, java.util.Locale("nl"))
++            val files = locales.mapNotNull { l -> DictionaryInfoUtils.getOrExtractEmojiDict(l, context)?.let { l to it } }
++                .distinctBy { it.second.path }
++            val key = files.map { it.second.path }
++            if (key == facilitatorKey && dictionaryFacilitators.isNotEmpty()) return
++            closeDictionaryFacilitator()
++            dictionaryFacilitators = files.mapNotNull { (l, f) ->
++                DictionaryFactory.getDictionary(f, l)?.let { SingleDictionaryFacilitator(it) }
+             }
++            facilitatorKey = key
+         }
+     }
+ }
 diff --git a/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt b/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
-index 3edca41..09ce8a6 100644
+index 3edca41..43dedb9 100644
 --- a/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
 +++ b/app/src/main/java/helium314/keyboard/latin/AppUpgrade.kt
-@@ -86,9 +86,10 @@ private object AppUpgrade {
+@@ -86,9 +86,11 @@ private object AppUpgrade {
          val oldVersion = prefs.getInt(Settings.PREF_VERSION_CODE, 0)
          if (oldVersion == 0) {
              // fresh install -> no need to upgrade, as this does things like keeping old defaults which is on wanted on actual upgrade
 -            prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE) }
-+            prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE).putInt(PHONECTL_LOOK_PREF, PHONECTL_LOOK) }
++            prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE).putInt(PHONECTL_LOOK_PREF, PHONECTL_LOOK).putBoolean("phonectl_haptics", true) }
              return
          }
 +        applyPhonectlLook(prefs)
++        applyPhonectlHaptics(prefs)
          // clear extracted dictionaries, in case updated version contains newer ones
          DictionaryInfoUtils.getCacheDirectories(context).forEach {
              for (file in it.listFiles()!!) {
-@@ -713,6 +714,25 @@ private object AppUpgrade {
+@@ -713,6 +715,31 @@ private object AppUpgrade {
          prefs.edit { putInt(Settings.PREF_VERSION_CODE, BuildConfig.VERSION_CODE) }
      }
  
@@ -113,6 +199,12 @@ index 3edca41..09ce8a6 100644
 +            prefs.all.keys.filter { key -> prefixes.any { key.startsWith(it) } }.forEach { remove(it) }
 +            putInt(PHONECTL_LOOK_PREF, PHONECTL_LOOK)
 +        }
++    }
++
++    // Once: switch vibrate on keypress on (it is on by default now); an install that has it on stays on.
++    private fun applyPhonectlHaptics(prefs: android.content.SharedPreferences) {
++        if (prefs.getBoolean("phonectl_haptics", false)) return
++        prefs.edit { putBoolean(Settings.PREF_VIBRATE_ON, true).putBoolean("phonectl_haptics", true) }
 +    }
 +
      // old variant for old folder structure
@@ -340,7 +432,7 @@ index 406e3cc..2fe12e8 100644
      }
  
 diff --git a/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt b/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt
-index b5fd76e..63a53b1 100644
+index b5fd76e..8a671ea 100644
 --- a/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt
 +++ b/app/src/main/java/helium314/keyboard/latin/settings/Defaults.kt
 @@ -12,7 +12,7 @@ import helium314.keyboard.latin.BuildConfig
@@ -352,7 +444,7 @@ index b5fd76e..63a53b1 100644
  import helium314.keyboard.latin.utils.POPUP_KEYS_ORDER_DEFAULT
  import helium314.keyboard.latin.utils.defaultClipboardToolbarPref
  import helium314.keyboard.latin.utils.defaultPinnedToolbarPref
-@@ -44,12 +44,12 @@ object Defaults {
+@@ -44,18 +44,18 @@ object Defaults {
      }
  
      private const val DEFAULT_SIZE_SCALE = 1.0f // 100%
@@ -369,6 +461,13 @@ index b5fd76e..63a53b1 100644
      @JvmField
      val PREF_THEME_DAY_NIGHT = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
      const val PREF_CUSTOM_ICON_NAMES = ""
+     const val PREF_TOOLBAR_CUSTOM_KEY_CODES = ""
+     const val PREF_AUTO_CAP = true
+-    const val PREF_VIBRATE_ON = false
++    const val PREF_VIBRATE_ON = true
+     const val PREF_VIBRATE_IN_DND_MODE = false
+     const val PREF_SOUND_ON = false
+     const val PREF_SUGGEST_EMOJIS = true
 @@ -78,12 +78,14 @@ object Defaults {
      const val PREF_BLOCK_POTENTIALLY_OFFENSIVE = true
      const val PREF_SHOW_LANGUAGE_SWITCH_KEY = false
@@ -424,6 +523,36 @@ index b5fd76e..63a53b1 100644
      val PREF_CLIPBOARD_TOOLBAR_KEYS = defaultClipboardToolbarPref
      const val PREF_ABC_AFTER_EMOJI = false
      const val PREF_ABC_AFTER_CLIP = false
+diff --git a/app/src/main/java/helium314/keyboard/latin/utils/DictionaryInfoUtils.kt b/app/src/main/java/helium314/keyboard/latin/utils/DictionaryInfoUtils.kt
+index 3e1d3fb..ddf4573 100644
+--- a/app/src/main/java/helium314/keyboard/latin/utils/DictionaryInfoUtils.kt
++++ b/app/src/main/java/helium314/keyboard/latin/utils/DictionaryInfoUtils.kt
+@@ -8,6 +8,7 @@ package helium314.keyboard.latin.utils
+ import android.content.Context
+ import android.text.TextUtils
+ import com.android.inputmethod.latin.utils.BinaryDictionaryUtils
++import helium314.keyboard.latin.common.LocaleUtils
+ import helium314.keyboard.latin.dictionary.Dictionary
+ import helium314.keyboard.latin.common.FileUtils
+ import helium314.keyboard.latin.common.LocaleUtils.constructLocale
+@@ -106,7 +107,16 @@ object DictionaryInfoUtils {
+     @JvmStatic
+     fun getLocalesWithEmojiDicts(context: Context): List<Locale> =
+         SubtypeSettings.getEnabledSubtypes(true)
+-            .map { it.locale() }.filter { getCachedDictForLocaleAndType(it, Dictionary.TYPE_EMOJI, context) != null }
++            .map { it.locale() }.filter { getOrExtractEmojiDict(it, context) != null }
++
++    /** phonectl: the emoji dict of [locale] from the cache, or extracted from the bundled assets (emoji_en, emoji_nl). */
++    @JvmStatic
++    fun getOrExtractEmojiDict(locale: Locale, context: Context): File? {
++        getCachedDictForLocaleAndType(locale, Dictionary.TYPE_EMOJI, context)?.let { return it }
++        val names = getAssetsDictionaryList(context)?.filter { it.startsWith(Dictionary.TYPE_EMOJI + "_") }.orEmpty()
++        val best = LocaleUtils.getBestMatch(locale, names) { extractLocaleFromAssetsDictionaryFile(it) } ?: return null
++        return extractAssetsDictionary(best, locale, context)
++    }
+ 
+     @JvmStatic
+     fun getCachedDictForLocaleAndType(locale: Locale, type: String, context: Context): File? =
 diff --git a/app/src/main/java/helium314/keyboard/latin/utils/PopupKeysUtils.kt b/app/src/main/java/helium314/keyboard/latin/utils/PopupKeysUtils.kt
 index dd55147..8f48760 100644
 --- a/app/src/main/java/helium314/keyboard/latin/utils/PopupKeysUtils.kt
@@ -596,6 +725,56 @@ index 158b30e..3a3c5e7 100644
  
      <!-- Toggle keys. Use checkable/checked state. -->
      <item android:state_checkable="true" android:state_checked="true" android:state_pressed="true"
+diff --git a/app/src/main/res/layout/clipboard_suggestion.xml b/app/src/main/res/layout/clipboard_suggestion.xml
+index 96cac99..c26df4d 100644
+--- a/app/src/main/res/layout/clipboard_suggestion.xml
++++ b/app/src/main/res/layout/clipboard_suggestion.xml
+@@ -4,7 +4,6 @@
+     android:orientation="horizontal"
+     android:background="@drawable/clipboard_suggestion_background"
+     android:gravity="center"
+-    android:paddingEnd="12dp"
+     android:layout_width="wrap_content"
+     android:layout_height="match_parent"
+     tools:ignore="RtlSymmetry">
+@@ -14,8 +13,8 @@
+         android:layout_weight="1"
+         android:layout_height="match_parent"
+         android:drawablePadding="3dp"
+-        android:paddingStart="12dp"
+-        android:paddingEnd="6dp"
++        android:paddingStart="36dp"
++        android:paddingEnd="0dp"
+         android:hapticFeedbackEnabled="false"
+         android:soundEffectsEnabled="false"
+         android:singleLine="true"
+@@ -36,8 +35,11 @@
+         android:id="@+id/clipboard_suggestion_close"
+         android:contentDescription="@string/spoken_clipboard_suggestion"
+         android:src="@drawable/ic_close"
+-        android:layout_width="wrap_content"
++        android:layout_width="32dp"
+         android:layout_height="wrap_content"
+-        android:gravity="center" />
++        android:layout_marginEnd="4dp"
++        android:padding="4dp"
++        android:layout_gravity="center_vertical"
++        android:scaleType="centerInside" />
+ 
+ </LinearLayout>
+diff --git a/app/src/main/res/layout/suggestions_strip.xml b/app/src/main/res/layout/suggestions_strip.xml
+index ee2f85e..87cee32 100644
+--- a/app/src/main/res/layout/suggestions_strip.xml
++++ b/app/src/main/res/layout/suggestions_strip.xml
+@@ -60,7 +60,7 @@
+             android:orientation="horizontal"
+             android:layout_width="wrap_content"
+             android:layout_height="match_parent"
+-            android:minWidth="0dp"
++            android:minWidth="37dp"
+             style="?attr/suggestionWordStyle">
+         </LinearLayout>
+     </LinearLayout>
 diff --git a/app/src/main/res/values/clip_provider.xml b/app/src/main/res/values/clip_provider.xml
 index 6c679f8..a449c45 100644
 --- a/app/src/main/res/values/clip_provider.xml

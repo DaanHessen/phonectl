@@ -22,6 +22,8 @@ elif ! git apply --reverse --check ../patches/*.patch 2>/dev/null; then
   echo "upstream/ has other changes; reset it to $TAG first" >&2
   exit 1
 fi
+# Bundled CLDR emoji dictionaries (emoji search and emoji suggestions), see README.
+cp ../assets/dicts/*.dict app/src/main/assets/dicts/
 [ -f local.properties ] || echo "sdk.dir=${ANDROID_HOME:-$HOME/sdk/android}" > local.properties
 rm -f app/build/outputs/apk/release/*.apk
 nice -n 10 ./gradlew --no-daemon --max-workers=4 assembleRelease
