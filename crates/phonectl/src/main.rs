@@ -84,6 +84,9 @@ enum Command {
         /// Only print the pairing string.
         #[arg(long)]
         no_adb: bool,
+        /// No ADB: show the pairing string as a QR code to scan with the phone camera.
+        #[arg(long)]
+        qr: bool,
     },
     /// Talk to the phone over ADB with phonectl's own ADB stack (development).
     #[command(subcommand)]
@@ -169,8 +172,8 @@ async fn link_command(command: Command) -> anyhow::Result<u8> {
             waybar::run().await?;
             Ok(exit::OK)
         }
-        Command::Setup { new_key, apk, no_adb } => {
-            setup::run(&config::Config::load()?, setup::Options { new_key, apk, no_adb }).await?;
+        Command::Setup { new_key, apk, no_adb, qr } => {
+            setup::run(&config::Config::load()?, setup::Options { new_key, apk, no_adb: no_adb || qr, qr }).await?;
             Ok(exit::OK)
         }
         Command::Status { json } => {

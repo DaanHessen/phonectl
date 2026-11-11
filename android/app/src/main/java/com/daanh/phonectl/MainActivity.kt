@@ -2,6 +2,7 @@ package com.daanh.phonectl
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -27,6 +28,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var checks: LinearLayout
     private lateinit var pairInput: EditText
+    private lateinit var pairHelp: TextView
     private val refresh: () -> Unit = { runOnUiThread { render() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +47,17 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(16))
         }
         root.addView(status)
+        pairHelp = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(0, 0, 0, dp(16))
+            text = "To pair with the laptop:\n" +
+                "1. On the laptop, run:  phonectl setup --qr\n" +
+                "2. Point the phone camera at the QR code and copy the text " +
+                "(or tap Open if the camera offers it: that pairs at once).\n" +
+                "3. Come back here: phonectl pairs by itself from the clipboard, " +
+                "or tap \"Paste and pair\" below."
+        }
+        root.addView(pairHelp)
         root.addView(Button(this).apply {
             text = "Send clipboard to laptop"
             setOnClickListener { ClipSync.readNow("button"); toast("Clipboard sent") }
@@ -69,14 +82,44 @@ class MainActivity : Activity() {
             text = "Pair"
             setOnClickListener { pair(pairInput.text.toString()) }
         })
+        root.addView(Button(this).apply {
+            text = "Paste and pair"
+            setOnClickListener { if (!pairFromClipboard()) toast("The clipboard holds no phonectl pairing string") }
+        })
 
         setContentView(ScrollView(this).apply { addView(root) })
-        intent?.getStringExtra("pair")?.let { pair(it) }
+        handlePairIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.getStringExtra("pair")?.let { pair(it) }
+        handlePairIntent(intent)
+    }
+
+    /** `--es pair <string>` from `phonectl setup` over ADB, or a scanned `phonectl:1;…` link. */
+    private fun handlePairIntent(intent: Intent?) {
+        intent ?: return
+        intent.getStringExtra("pair")?.let { pair(it); return }
+        if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "phonectl") {
+            intent.dataString?.let { pair(Uri.decode(it)) }
+        }
+    }
+
+    /**
+     * Pairs from a pairing string on the clipboard (copied from the laptop's
+     * QR code), then clears it: it is the link key.
+     */
+    private fun pairFromClipboard(): Boolean {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        val text = try {
+            clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
+        } catch (_: Exception) {
+            null
+        }?.trim() ?: return false
+        if (Config.parse(text) == null) return false
+        pair(text)
+        try { clipboard.clearPrimaryClip() } catch (_: Exception) {}
+        return true
     }
 
     override fun onResume() {
@@ -107,12 +150,13 @@ class MainActivity : Activity() {
     private fun render() {
         val config = Link.config
         status.text = when (Link.state) {
-            Link.State.UNPAIRED -> "Not paired. Run `phonectl setup` on the laptop."
+            Link.State.UNPAIRED -> "Not paired with a laptop yet."
             Link.State.CONNECTING -> "Connecting to ${config?.name}…"
             Link.State.CONNECTED -> "Connected to ${Link.session?.laptopName} over ${Link.session?.transport?.wire}"
             Link.State.DISCONNECTED -> "Not connected" + (Link.lastError?.let { "\n$it" } ?: "")
         }
 
+        pairHelp.visibility = if (Link.state == Link.State.UNPAIRED) android.view.View.VISIBLE else android.view.View.GONE
         checks.removeAllViews()
         val power = getSystemService(PowerManager::class.java)
         check("Notification access", "Mirrors notifications and keeps the link running", NotifListener.connected || listenerEnabled()) {
@@ -198,6 +242,9 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) ClipSync.readNow("app")
+        if (!hasFocus) return
+        // Unpaired and a pairing string was just copied from the QR code: use it.
+        if (Link.config == null && pairFromClipboard()) return
+        ClipSync.readNow("app")
     }
 }

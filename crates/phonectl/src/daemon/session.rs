@@ -355,6 +355,7 @@ async fn dispatch_event(daemon: &Shared, topic: &str, data: Value) {
             tracing::info!("phone app update: {status}");
             daemon.event("update", json!({"status": status}));
         }
+        "crash" => save_crash_report(&data),
         other => tracing::debug!("ignoring event {other}"),
     }
 }
@@ -391,6 +392,31 @@ async fn write_json<W: AsyncWrite + Unpin>(write: &mut W, value: &Value) -> std:
     write.flush().await
 }
 
+/// A crash report from the phone app or phonectl Keyboard: logged, and kept in
+/// `<data dir>/crashes/` (the phone sends each report once).
+fn save_crash_report(data: &Value) {
+    let source = data.get("source").and_then(Value::as_str).unwrap_or("phone");
+    let report = data.get("report").and_then(Value::as_str).unwrap_or("");
+    let name = crash_file_name(data.get("name").and_then(Value::as_str))
+        .unwrap_or_else(|| format!("{}.txt", now_millis()));
+    let dir = phone::paths::data_dir().join("crashes");
+    let saved = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), report));
+    match saved {
+        Ok(()) => tracing::warn!("phone crash report ({source}) saved to {}:\n{report}", dir.join(&name).display()),
+        Err(e) => tracing::warn!("phone crash report ({source}), not saved ({e}):\n{report}"),
+    }
+}
+
+/// The phone's report name reduced to a safe file name, or None if nothing usable is left.
+fn crash_file_name(name: Option<&str>) -> Option<String> {
+    let name: String = name?
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(64)
+        .collect();
+    (!name.is_empty() && !name.starts_with('.')).then_some(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,4 +434,14 @@ mod tests {
         let mut reader = BufReader::new(empty);
         assert!(!read_line(&mut reader, &mut line).await.unwrap());
     }
+
+    #[test]
+    fn crash_file_name_is_safe() {
+        assert_eq!(crash_file_name(Some("20261111-140000-keyboard.txt")).as_deref(), Some("20261111-140000-keyboard.txt"));
+        assert_eq!(crash_file_name(Some("../../etc/passwd")).as_deref(), None);
+        assert_eq!(crash_file_name(Some("a/../b.txt")).as_deref(), Some("a..b.txt"));
+        assert_eq!(crash_file_name(Some("")), None);
+        assert_eq!(crash_file_name(None), None);
+    }
 }
+

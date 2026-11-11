@@ -37,6 +37,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- The pairing string is itself a phonectl: URI, so a QR scanner
+                 that offers "Open" hands it straight to the app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="phonectl" />
+            </intent-filter>
         </activity>
 
         <activity
@@ -91,6 +99,7 @@
             android:permission="com.daanh.phonectl.permission.BRIDGE">
             <intent-filter>
                 <action android:name="com.daanh.phonectl.action.CLIP" />
+                <action android:name="com.daanh.phonectl.action.CRASH" />
             </intent-filter>
         </receiver>
 

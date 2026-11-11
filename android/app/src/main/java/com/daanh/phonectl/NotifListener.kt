@@ -191,7 +191,7 @@ class NotifListener : NotificationListenerService() {
             when (method) {
                 "notification_action", "notification_open", "notification_dismiss" -> {}
                 "test_notification" -> { SetupNotice.test(context); return Unit }
-                "diag" -> return org.json.JSONArray(Diag.dump())
+                "diag" -> return org.json.JSONArray(Crashes.dump() + Diag.dump())
                 "icon" -> return icon(params?.optString("package") ?: throw IllegalArgumentException("package"))
                 else -> return null
             }

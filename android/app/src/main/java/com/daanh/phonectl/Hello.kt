@@ -38,4 +38,4 @@ object Hello {
     }
 }
 
-object BuildConfigVersion { const val NAME = "0.2.0" }
+object BuildConfigVersion { const val NAME = "0.2.1" }

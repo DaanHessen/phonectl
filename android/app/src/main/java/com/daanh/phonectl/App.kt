@@ -13,6 +13,7 @@ import android.content.Intent
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        Crashes.install(this)
         StatusMonitor.start(this)
         ClipSync.start(this)
         Keyboard.init(this)

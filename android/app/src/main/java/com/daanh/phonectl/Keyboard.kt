@@ -27,6 +27,7 @@ object Keyboard : Link.Feature {
     const val PERMISSION = "com.daanh.phonectl.permission.BRIDGE"
     const val ACTION_CLIP = "com.daanh.phonectl.action.CLIP"
     const val ACTION_TYPE = "com.daanh.phonectl.action.TYPE"
+    const val ACTION_CRASH = "com.daanh.phonectl.action.CRASH"
 
     private lateinit var context: Context
 
@@ -71,8 +72,10 @@ object Keyboard : Link.Feature {
 /** Receives clips from phonectl Keyboard (protected by [Keyboard.PERMISSION] in the manifest). */
 class KeyboardBridge : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Keyboard.ACTION_CLIP) return
-        val text = intent.getStringExtra("text") ?: return
-        ClipSync.localText(text)
+        when (intent.action) {
+            Keyboard.ACTION_CLIP -> ClipSync.localText(intent.getStringExtra("text") ?: return)
+            // phonectl Keyboard crashed: keep its report for the laptop.
+            Keyboard.ACTION_CRASH -> Crashes.save("keyboard", intent.getStringExtra("report") ?: return)
+        }
     }
 }

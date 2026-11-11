@@ -58,6 +58,7 @@ pub struct Options {
     pub new_key: bool,
     pub apk: Option<PathBuf>,
     pub no_adb: bool,
+    pub qr: bool,
 }
 
 pub async fn run(config: &Config, options: Options) -> anyhow::Result<()> {
@@ -78,6 +79,13 @@ pub async fn run(config: &Config, options: Options) -> anyhow::Result<()> {
     if options.no_adb || !adb_ready() {
         if !options.no_adb {
             println!("No phone on ADB; skipping install and grants.");
+        }
+        if options.qr {
+            print_qr(&pairing)?;
+            println!("Scan this with the phone camera and copy the text (or tap Open if offered),");
+            println!("then open phonectl on the phone: it pairs from the clipboard by itself.");
+            println!("Keep it private: it is the key to the link. Clear the terminal afterwards.");
+            return Ok(());
         }
         println!("Paste this into the phonectl app (Pairing):\n\n{pairing}\n");
         println!("Keep it private: it is the key to the link.");
@@ -123,6 +131,18 @@ pub async fn run(config: &Config, options: Options) -> anyhow::Result<()> {
     ])?;
     println!("paired. The app is open on the phone; anything still marked ✗ there needs a tap.");
     println!("Once it shows Connected you can turn off Wireless/USB debugging again.");
+    Ok(())
+}
+
+/// Prints `text` as a terminal QR code with `qrencode` (package qrencode).
+fn print_qr(text: &str) -> anyhow::Result<()> {
+    let mut child = Command::new("qrencode")
+        .args(["-t", "ansiutf8", "-m", "2"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("cannot run qrencode ({e}); install it: pacman -S qrencode"))?;
+    child.stdin.take().unwrap().write_all(text.as_bytes())?;
+    anyhow::ensure!(child.wait()?.success(), "qrencode failed");
     Ok(())
 }
 
