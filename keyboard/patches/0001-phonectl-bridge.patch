@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 0d4dcaf..db79bb5 100755
+index 0d4dcaf..3bca086 100755
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,14 +10,14 @@ android {
@@ -10,9 +10,10 @@ index 0d4dcaf..db79bb5 100755
 +        applicationId = "com.daanh.phonectl.keyboard"
          minSdk = 21
          targetSdk = 37
-         versionCode = 4201
+-        versionCode = 4201
 -        versionName = "4.2"
-+        versionName = "4.2-phonectl"
++        versionCode = 4202
++        versionName = "4.2-phonectl.2"
          ndk {
              abiFilters.clear()
 -            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -39,7 +40,7 @@ index 0d4dcaf..db79bb5 100755
      packaging {
          jniLibs {
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index d50a3c9..72c413e 100644
+index d50a3c9..ed02c2f 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -8,13 +8,22 @@ SPDX-License-Identifier: Apache-2.0 AND GPL-3.0-only
@@ -62,7 +63,7 @@ index d50a3c9..72c413e 100644
      <uses-permission android:name="android.permission.READ_CONTACTS" />
  
 -    <application android:label="@string/english_ime_name"
-+    <application android:label="phonectl Keyboard"
++    <application android:label="@string/phonectl_keyboard_name"
              android:name="helium314.keyboard.latin.App"
              android:icon="@mipmap/ic_launcher"
              android:roundIcon="@mipmap/ic_launcher_round"
@@ -71,7 +72,7 @@ index d50a3c9..72c413e 100644
          <!-- Services -->
          <service android:name="LatinIME"
 -                android:label="@string/english_ime_name"
-+                android:label="phonectl Keyboard"
++                android:label="@string/phonectl_keyboard_name"
                  android:permission="android.permission.BIND_INPUT_METHOD"
                  android:directBootAware="true"
                  android:exported="true">
@@ -109,10 +110,10 @@ index 4b3e35b..8f915b0 100644
          if (foldableObserver != null)
 diff --git a/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt b/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt
 new file mode 100644
-index 0000000..e853617
+index 0000000..aebc2c0
 --- /dev/null
 +++ b/app/src/main/java/helium314/keyboard/latin/PhonectlBridge.kt
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,125 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +// phonectl Keyboard: the only addition to HeliBoard. See phonectl/keyboard/README.md.
 +
@@ -148,6 +149,7 @@ index 0000000..e853617
 +    private const val PERMISSION = "com.daanh.phonectl.permission.BRIDGE"
 +    private const val ACTION_CLIP = "com.daanh.phonectl.action.CLIP"
 +    private const val ACTION_TYPE = "com.daanh.phonectl.action.TYPE"
++    private const val ACTION_CRASH = "com.daanh.phonectl.action.CRASH"
 +    private const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
 +    private const val EXTRA_IS_REMOTE_DEVICE = "android.content.extra.IS_REMOTE_DEVICE"
 +    /** Binder transactions cap out near 1 MB; UTF-16 doubles the size. */
@@ -200,6 +202,21 @@ index 0000000..e853617
 +        }
 +    }
 +
++    /**
++     * Hands a crash report (versions and stack trace only, no typed text) to
++     * phonectl, which sends it to the laptop. Called from the crash handler.
++     */
++    @JvmStatic
++    fun sendCrash(context: Context, report: String) {
++        try {
++            context.sendBroadcast(Intent(ACTION_CRASH)
++                .setComponent(ComponentName(PHONECTL, "$PHONECTL.KeyboardBridge"))
++                .putExtra("report", report.take(32_000))
++                .addFlags(Intent.FLAG_RECEIVER_FOREGROUND), PERMISSION)
++        } catch (_: Throwable) {
++        }
++    }
++
 +    private fun type(ime: LatinIME, text: String?, key: String?) {
 +        val ic = ime.currentInputConnection ?: return
 +        if (!text.isNullOrEmpty()) {
@@ -222,3 +239,53 @@ index 0000000..e853617
 +        }
 +    }
 +}
+diff --git a/app/src/main/java/helium314/keyboard/latin/define/DebugFlags.kt b/app/src/main/java/helium314/keyboard/latin/define/DebugFlags.kt
+index 406e3cc..2fe12e8 100644
+--- a/app/src/main/java/helium314/keyboard/latin/define/DebugFlags.kt
++++ b/app/src/main/java/helium314/keyboard/latin/define/DebugFlags.kt
+@@ -58,6 +58,11 @@ $stackTrace
+ Last log:
+ ${Log.getLog(100).joinToString("\n")}
+ """)
++        helium314.keyboard.latin.PhonectlBridge.sendCrash(appContext, """App: phonectl Keyboard ${BuildConfig.VERSION_NAME}
++Thread: ${t.name}
++Device: ${Build.BRAND} ${Build.DEVICE}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})
++
++$stackTrace""")
+         defaultUncaughtExceptionHandler!!.uncaughtException(t, e)
+     }
+ 
+diff --git a/app/src/main/res/values/clip_provider.xml b/app/src/main/res/values/clip_provider.xml
+index 6c679f8..a449c45 100644
+--- a/app/src/main/res/values/clip_provider.xml
++++ b/app/src/main/res/values/clip_provider.xml
+@@ -1,4 +1,4 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="clipboard_provider_authority" translatable="false">helium314.keyboard.clipprovider</string>
++    <string name="clipboard_provider_authority" translatable="false">com.daanh.phonectl.keyboard.clipprovider</string>
+ </resources>
+diff --git a/app/src/main/res/values/gesture_data.xml b/app/src/main/res/values/gesture_data.xml
+index de6c778..1e883c8 100644
+--- a/app/src/main/res/values/gesture_data.xml
++++ b/app/src/main/res/values/gesture_data.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="gesture_data_provider_authority" translatable="false">helium314.keyboard.provider</string>
++    <string name="gesture_data_provider_authority" translatable="false">com.daanh.phonectl.keyboard.provider</string>
+     <string name="gesture_data_directory" translatable="false">gesture_data</string>
+     <string name="gesture_data_json" translatable="false">heliboard_data.gestures.json</string>
+     <string name="gesture_data_zip" translatable="false">gesture_data.zip</string>
+diff --git a/app/src/main/res/values/phonectl.xml b/app/src/main/res/values/phonectl.xml
+new file mode 100644
+index 0000000..a8390a7
+--- /dev/null
++++ b/app/src/main/res/values/phonectl.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- SPDX-License-Identifier: GPL-3.0-only -->
++<!-- phonectl Keyboard. The labels must be resources: WelcomeWizard reads applicationInfo.labelRes. -->
++<resources>
++    <string name="phonectl_keyboard_name" translatable="false">phonectl Keyboard</string>
++</resources>

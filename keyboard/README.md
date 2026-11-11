@@ -22,6 +22,14 @@ What the patch changes (`patches/0001-phonectl-bridge.patch`):
   "type" requests from phonectl and types the text or presses the key in the
   focused field.
 * Two hook lines in `LatinIME.java` and one in `ClipboardHistoryManager.kt`.
+* HeliBoard's crash handler (`DebugFlags.kt`) also hands each crash report
+  (versions and stack trace) to phonectl, which sends it to the laptop.
+* The labels come from the string resource `phonectl_keyboard_name`
+  (`res/values/phonectl.xml`). It must be a resource, not a literal: the
+  setup wizard reads `applicationInfo.labelRes` and crashes on 0.
+* The two content provider authorities are renamed to
+  `com.daanh.phonectl.keyboard.*`, so stock HeliBoard can be installed next
+  to it.
 
 Everything else is HeliBoard as released. HeliBoard's own clipboard-history
 setting does not affect the sync.

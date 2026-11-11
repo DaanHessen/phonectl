@@ -6,3 +6,4 @@
 /docs/research/device/
 /keyboard/upstream
 /keyboard/*.apk
+/keyboard/crash-*.txt

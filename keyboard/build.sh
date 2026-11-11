@@ -23,8 +23,9 @@ elif ! git apply --reverse --check ../patches/*.patch 2>/dev/null; then
   exit 1
 fi
 [ -f local.properties ] || echo "sdk.dir=${ANDROID_HOME:-$HOME/sdk/android}" > local.properties
+rm -f app/build/outputs/apk/release/*.apk
 ./gradlew --no-daemon assembleRelease
-apk=app/build/outputs/apk/release/HeliBoard_4.2-phonectl-release.apk
+apk=$(ls app/build/outputs/apk/release/*-release.apk | head -1)
 # Must match the phonectl app's key, or the bridge permission is not granted.
 # (AGP takes the debug key from $XDG_CONFIG_HOME/.android when that is set, so
 # a sandboxed shell silently signs with a new key.)
