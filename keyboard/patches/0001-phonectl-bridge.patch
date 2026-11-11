@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 0d4dcaf..edfd64c 100755
+index 0d4dcaf..f42d55d 100755
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,14 +10,14 @@ android {
@@ -12,8 +12,8 @@ index 0d4dcaf..edfd64c 100755
          targetSdk = 37
 -        versionCode = 4201
 -        versionName = "4.2"
-+        versionCode = 4208
-+        versionName = "4.2.8"
++        versionCode = 4209
++        versionName = "4.2.9"
          ndk {
              abiFilters.clear()
 -            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -497,10 +497,10 @@ index 33a9426..5f16cf1 100644
  }
 diff --git a/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
 new file mode 100644
-index 0000000..3f0ddaf
+index 0000000..2df09a0
 --- /dev/null
 +++ b/app/src/main/java/helium314/keyboard/keyboard/emoji/InlineEmojiSearch.kt
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,353 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +package helium314.keyboard.keyboard.emoji
 +
@@ -704,9 +704,13 @@ index 0000000..3f0ddaf
 +            }
 +            code == KeyCode.EMOJI -> {
 +                stop()
++                return false
++            }
++            code == KeyCode.ALPHA || code == KeyCode.SYMBOL || code == KeyCode.SYMBOL_ALPHA -> {
++                stop()
 +                return true
 +            }
-+            code == KeyCode.SHIFT || code == KeyCode.ALPHA || code == KeyCode.SYMBOL || code == KeyCode.SYMBOL_ALPHA -> return true
++            code == KeyCode.SHIFT -> return true
 +            event.codePoint >= 0 && event.metaState == 0 -> {
 +                if (event.codePoint != '\n'.code) appendText(String(Character.toChars(event.codePoint)))
 +                return true
@@ -1141,7 +1145,7 @@ index 4de9cb9..875ac20 100644
          val scale = Settings.getValues().mKeyboardHeightScale
          // scale one-handed mode button height if keyboard height scale is < 80%
 diff --git a/app/src/main/java/helium314/keyboard/latin/LatinIME.java b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
-index 4b3e35b..97c16c8 100644
+index 4b3e35b..7302dd0 100644
 --- a/app/src/main/java/helium314/keyboard/latin/LatinIME.java
 +++ b/app/src/main/java/helium314/keyboard/latin/LatinIME.java
 @@ -26,6 +26,7 @@ import android.util.PrintWriterPrinter;
@@ -1219,7 +1223,15 @@ index 4b3e35b..97c16c8 100644
          super.onFinishInputView(finishingInput);
          Log.i(TAG, "onFinishInputView");
          cleanupInternalStateForFinishInput();
-@@ -1428,6 +1442,11 @@ public class LatinIME extends InputMethodService implements
+@@ -1136,6 +1150,7 @@ public class LatinIME extends InputMethodService implements
+     @Override
+     public void hideWindow() {
+         Log.i(TAG, "hideWindow");
++        InlineEmojiSearch.stop();
+         if (hasSuggestionStripView() && mSettings.getCurrent().mToolbarMode == ToolbarMode.EXPANDABLE)
+             mSuggestionStripView.setToolbarVisibility(false);
+         mKeyboardSwitcher.onHideWindow();
+@@ -1428,6 +1443,11 @@ public class LatinIME extends InputMethodService implements
      // This method is public for testability of LatinIME, but also in the future it should
      // completely replace #onCodeInput.
      public void onEvent(@NonNull final Event event) {
@@ -1231,7 +1243,7 @@ index 4b3e35b..97c16c8 100644
          if (KeyCode.VOICE_INPUT == event.getKeyCode()) {
              mRichImm.switchToShortcutIme(this);
          }
-@@ -1441,6 +1460,10 @@ public class LatinIME extends InputMethodService implements
+@@ -1441,6 +1461,10 @@ public class LatinIME extends InputMethodService implements
  
      public void onTextInput(@Nullable String rawText) {
          if (rawText == null) return;
@@ -1242,7 +1254,7 @@ index 4b3e35b..97c16c8 100644
          // TODO: have the keyboard pass the correct key code when we need it.
          Event event = Event.createSoftwareTextEvent(rawText, KeyCode.MULTIPLE_CODE_POINTS, null);
          InputTransaction completeInputTransaction = mInputLogic.onTextInput(mSettings.getCurrent(),
-@@ -1451,15 +1474,18 @@ public class LatinIME extends InputMethodService implements
+@@ -1451,15 +1475,18 @@ public class LatinIME extends InputMethodService implements
      }
  
      public void onStartBatchInput() {
@@ -1261,7 +1273,18 @@ index 4b3e35b..97c16c8 100644
          mInputLogic.onEndBatchInput(batchPointers);
          mGestureConsumer.onGestureCompleted(batchPointers);
      }
-@@ -1750,9 +1776,24 @@ public class LatinIME extends InputMethodService implements
+@@ -1694,6 +1721,10 @@ public class LatinIME extends InputMethodService implements
+     // Hooks for hardware keyboard
+     @Override
+     public boolean onKeyDown(final int keyCode, final KeyEvent keyEvent) {
++        if (keyCode == KeyEvent.KEYCODE_BACK && InlineEmojiSearch.isActive()) {
++            InlineEmojiSearch.stop();
++            return true;
++        }
+         if (mKeyboardActionListener.onKeyDown(keyCode, keyEvent))
+             return true;
+         return super.onKeyDown(keyCode, keyEvent);
+@@ -1750,9 +1781,24 @@ public class LatinIME extends InputMethodService implements
      }
  
      public void launchEmojiSearch() {
@@ -1271,7 +1294,7 @@ index 4b3e35b..97c16c8 100644
 +        final FrameLayout strip = mKeyboardSwitcher.getStripContainer();
 +        if (strip == null) return;
 +        mKeyboardSwitcher.resetKeyboardStateToAlphabetWithoutAutoCaps();
-+        InlineEmojiSearch.start(mDisplayContext, strip, emoji -> { commitSearchEmoji(emoji); return kotlin.Unit.INSTANCE; }, () -> { closeEmojiSearch(); return kotlin.Unit.INSTANCE; });
++        InlineEmojiSearch.start(mDisplayContext, strip, emoji -> { InlineEmojiSearch.stop(); commitSearchEmoji(emoji); return kotlin.Unit.INSTANCE; }, () -> { closeEmojiSearch(); return kotlin.Unit.INSTANCE; });
 +    }
 +
 +    private void commitSearchEmoji(final String emoji) {

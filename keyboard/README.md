@@ -93,6 +93,13 @@ What the patch changes (`patches/0001-phonectl-bridge.patch`):
   letters. Emoji search lives in the strip row (field on the left, matching
   emojis on the right), so the keyboard keeps its height there too.
 
+* Version 4.2.9: leaving emoji search is one step. Tapping an emoji inserts
+  it and closes the search (field cleared, letter keyboard back). The ABC
+  and ?123 keys and the emoji key close the search (the emoji key only
+  closes it, it does not open the panel). The system back button closes
+  the search and keeps the keyboard open. Hiding the keyboard ends the
+  search, so it always comes back as the letter keyboard.
+
 Everything else is HeliBoard as released. HeliBoard's own clipboard-history
 setting does not affect the sync.
 
