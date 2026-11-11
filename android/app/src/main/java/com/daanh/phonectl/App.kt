@@ -17,6 +17,7 @@ class App : Application() {
         StatusMonitor.start(this)
         ClipSync.start(this)
         Keyboard.init(this)
+        AdbWindow.init(this)
         NotifListener.init(this)
         PhoneControls.init(this)
         Updater.init(this)

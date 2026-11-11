@@ -12,7 +12,7 @@ android {
         targetSdk = 36
         // Minutes since 2026-01-01: every build installs over the last one.
         versionCode = ((System.currentTimeMillis() - 1_767_225_600_000L) / 60_000L).toInt()
-        versionName = "0.2.1"
+        versionName = "0.3.0"
     }
 
     buildTypes {

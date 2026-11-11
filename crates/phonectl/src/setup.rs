@@ -171,6 +171,71 @@ fn adb(args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `phonectl setup-clipboard`: the one ADB session automatic phone → laptop
+/// clipboard needs. Pairs this laptop's own ADB key (the daemon uses it later
+/// to restart the watcher), lets phonectl switch wireless debugging
+/// (WRITE_SECURE_SETTINGS), starts the watcher and switches wireless
+/// debugging off.
+pub async fn clipboard(
+    code: Option<String>,
+    address: Option<std::net::SocketAddr>,
+    no_pair: bool,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    use adb::discovery::{Service, find};
+    use anyhow::Context;
+    use phone::paths;
+
+    let key = adb::HostKey::load_or_generate(&paths::adb_key()).context("loading this laptop's adb key")?;
+    let comment = paths::key_comment();
+    if !no_pair {
+        let code = match code {
+            Some(code) => code,
+            None => {
+                println!("On the phone: Settings > Developer options > Wireless debugging > Pair device with pairing code.");
+                print!("Pairing code: ");
+                std::io::stdout().flush()?;
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line.trim().to_string()
+            }
+        };
+        anyhow::ensure!(code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()), "the pairing code has six digits");
+        let address = match address {
+            Some(address) => address,
+            None => find(Service::Pairing, None, timeout)
+                .await
+                .context("no phone showing a pairing code found; pass --address IP:PORT (shown under the code)")?
+                .address,
+        };
+        adb::pairing::pair(address, &code, &key, &comment).await.context("pairing")?;
+        println!("paired: the phone knows this laptop as {comment}");
+    }
+
+    let connected = phone::discover_and_connect(None, &key, &comment, timeout)
+        .await
+        .context("connecting over wireless debugging (is it on, and is the laptop on the same Wi-Fi?)")?;
+    let run = |command: String| {
+        let connected = &connected;
+        async move { phone::shell(&connected.connection, &connected.banner, &command).await }
+    };
+
+    let grant = run(format!("pm grant {PACKAGE} android.permission.WRITE_SECURE_SETTINGS")).await?;
+    anyhow::ensure!(grant.ok() && grant.stderr_text().is_empty(), "pm grant failed: {} {}", grant.stdout_text(), grant.stderr_text());
+    println!("phonectl may now switch wireless debugging on for a few seconds when the watcher needs a start");
+
+    let started = run(crate::daemon::watcher::START_COMMAND.to_string()).await?;
+    let text = format!("{} {}", started.stdout_text(), started.stderr_text());
+    anyhow::ensure!(started.ok() && !text.contains("Error"), "starting the watcher failed: {}", text.trim());
+    println!("clipboard watcher started");
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // Ends this connection too; the watcher keeps running.
+    let _ = run("settings put global adb_wifi_enabled 0".to_string()).await;
+    println!("wireless debugging is off again. Check with: phonectl status");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

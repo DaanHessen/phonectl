@@ -22,8 +22,18 @@
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- Development permission: granted once with `pm grant`, see ClipSync. -->
     <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
+    <!-- Granted once with `pm grant` (phonectl setup-clipboard): lets the app
+         open short wireless-debugging windows for the laptop, see AdbWindow. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <!-- Notification actions open their target apps. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+
+    <!-- Started by the laptop over wireless debugging; reads the clipboard in
+         the background with the shell's permission. See ShellWatcher. -->
+    <instrumentation
+        android:name=".ShellWatcher"
+        android:label="phonectl clipboard watcher"
+        android:targetPackage="com.daanh.phonectl" />
 
     <application
         android:name=".App"

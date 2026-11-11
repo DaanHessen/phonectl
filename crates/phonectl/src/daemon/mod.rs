@@ -17,6 +17,7 @@ pub mod net;
 pub mod notify;
 pub mod session;
 pub mod sleep;
+pub mod watcher;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -75,6 +76,7 @@ pub struct Daemon {
     pub clipboard: clipboard::Clipboard,
     pub notifier: notify::Notifier,
     pub media: media::CallMedia,
+    pub watcher: watcher::Watcher,
 }
 
 pub type Shared = Arc<Daemon>;
@@ -125,6 +127,7 @@ impl Daemon {
             },
             "status": state.phone.status,
             "notifications": state.notifications,
+            "clipboard_watcher": self.watcher.status(),
         })
     }
 
@@ -172,6 +175,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let daemon = Arc::new(Daemon {
         clipboard: clipboard::Clipboard::new(),
         media: media::CallMedia::new().await?,
+        watcher: watcher::Watcher::default(),
         notifier,
         sessions: session::Registry::default(),
         state: Mutex::new(State { phone: load_phone(), ..State::default() }),

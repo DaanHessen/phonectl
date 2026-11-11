@@ -344,6 +344,17 @@ object Link {
                 for (f in features) {
                     try {
                         val data = f.onCall(method, params) ?: continue
+                        if (data is java.util.concurrent.CompletableFuture<*>) {
+                            // Slow calls answer later, off the link thread.
+                            data.whenComplete { value, error ->
+                                val cause = (error as? java.util.concurrent.CompletionException)?.cause ?: error
+                                from.send(
+                                    if (cause != null) Protocol.result(id, null, cause.message ?: cause.javaClass.simpleName)
+                                    else Protocol.result(id, if (value == Unit) null else value)
+                                )
+                            }
+                            return
+                        }
                         reply = Protocol.result(id, if (data == Unit) null else data)
                         break
                     } catch (e: Exception) {

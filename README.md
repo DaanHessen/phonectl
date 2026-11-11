@@ -79,7 +79,7 @@ already on. Phone on 5G and laptop on school Wi-Fi? Still connected. No network
 at all? It falls back to Bluetooth.
 
 What it does:
-* **Clipboard sync, both ways**, with loop prevention and "newest wins" after a reconnect. Password-manager clips are never sent
+* **Clipboard sync, both ways, with any keyboard** (Gboard stays): copies on the phone reach the laptop with no taps, also after reboots and app updates, without root ([how](docs/how-it-works.md)). Loop prevention, "newest wins" after a reconnect, password-manager clips are never sent
 * **Phone notifications on the desktop** (mako or any freedesktop daemon): app name and icon, updates in place, removal and dismissal in both directions, actions and "open on phone"
 * **Calls pause laptop media** (any MPRIS player) and resume exactly what was paused once the call ends
 * **Waybar module and drop-down panel**: battery, charging, Wi-Fi/mobile signal, 5G/LTE, carrier, call state, now playing on the phone, find my phone, ringer mode
@@ -131,7 +131,16 @@ phones: any Android 13+ phone and any Wayland desktop with systemd should work.
    ```sh
    phonectl setup
    ```
-5. Add the Waybar module
+5. Automatic phone → laptop clipboard (once): open Wireless debugging > Pair
+   device with pairing code on the phone, then
+   ```sh
+   phonectl setup-clipboard
+   ```
+   It pairs the daemon's own ADB key, lets phonectl switch wireless debugging
+   on for a few seconds when the watcher needs a restart, starts the watcher
+   and switches wireless debugging off. Trust your home Wi-Fi for wireless
+   debugging ("Always allow on this network") so restarts need no tap.
+6. Add the Waybar module
    ```jsonc
    "custom/phonectl": {
      "exec": "phonectl waybar",
@@ -165,6 +174,7 @@ phonectl events               live link events
 phonectl diag                 the phone app's own log, no ADB needed
 phonectl update               install a new app build over the link
 phonectl type TEXT [--key K]  type on the phone (phonectl Keyboard); `-` = stdin
+phonectl setup-clipboard      one-time setup for automatic phone → laptop clipboard
 ```
 
 **How it connects.** The laptop listens only on its Tailscale address and the
@@ -176,10 +186,18 @@ so the phone reconnects at once instead of waiting for its backoff, and tells
 the phone before it suspends so the phone stays quiet meanwhile.
 
 **Known limits (Android, not bugs).**
-* Automatic phone → laptop clipboard needs phonectl Keyboard (`keyboard/`) as the phone's keyboard: Android 10+ lets only the focused app and the default keyboard read the clipboard. See `docs/redesign-2026-11.md`. Without it, the old fallback below applies.
-* Fallback without the keyboard: automatic phone → laptop clipboard needs one tap after every phone reboot or app update. Android only lets the focused app read the clipboard, so phonectl spots changes in the system log and briefly focuses an invisible activity to read them (like KDE Connect). Android 13+ asks for log-access consent, but only shows that prompt to an app on screen, so after a restart a quiet notification asks for a tap. Until then, share text to "Send to laptop" or use the Quick Settings tile.
+* Automatic phone → laptop clipboard is restarted by the laptop over wireless debugging after a phone reboot or app update, so the phone must be on a Wi-Fi network trusted for wireless debugging for that (seconds). On 5G it waits for the next Wi-Fi connection. Android shows its "phonectl pasted from your clipboard" toast once per copied clip.
+* Old fallback without the watcher: automatic phone → laptop clipboard needs one tap after every phone reboot or app update. Android only lets the focused app read the clipboard, so phonectl spots changes in the system log and briefly focuses an invisible activity to read them (like KDE Connect). Android 13+ asks for log-access consent, but only shows that prompt to an app on screen, so after a restart a quiet notification asks for a tap. Until then, share text to "Send to laptop" or use the Quick Settings tile.
 * Replies to messages are not possible from the laptop yet (mako has no text input); other notification actions work.
 * Wi-Fi Direct is not used: Android asks the user to accept every connection, and Bluetooth is enough for this little data.
+
+**Security.** Every capability phonectl holds, what it could do, how it is
+limited, the remaining risks and how to turn each feature off are in
+[docs/security.md](docs/security.md). In short: one borrowed shell permission
+(background clipboard reads), wireless debugging switched on only for seconds
+while the laptop restarts the watcher, a mutual-HMAC link, no exported entry
+points that let other apps drive phonectl, and pairing changes only after a
+confirm on the phone.
 
 _Design notes and research are in [docs](docs/)._
 
@@ -194,6 +212,7 @@ _Design notes and research are in [docs](docs/)._
 - [x] Pause/resume media for calls
 - [x] Waybar module and phone panel
 - [x] Updates over the link
+- [x] Automatic phone → laptop clipboard with any keyboard (shell-identity watcher)
 - [ ] Bluetooth fallback tested end to end
 - [ ] Reply to messages from the laptop
 - [ ] Re-check everything on Android 17

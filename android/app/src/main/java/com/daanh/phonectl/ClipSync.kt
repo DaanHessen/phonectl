@@ -88,11 +88,17 @@ object ClipSync : Link.Feature {
 
     fun autoAvailable(): Boolean = mode() != "manual"
 
-    /** How phone → laptop clips are picked up: "keyboard", "logcat" or "manual". */
+    /**
+     * How phone → laptop clips are picked up: "shell", "keyboard", "logcat",
+     * "waiting" (set up for the shell watcher, which the laptop starts on
+     * trusted Wi-Fi) or "manual".
+     */
     fun mode(): String = when {
         !::context.isInitialized -> "manual"
+        ShellClip.active -> "shell"
         Keyboard.isDefault(context) -> "keyboard"
         logAccess && Settings.canDrawOverlays(context) -> "logcat"
+        AdbWindow.canToggle() -> "waiting"
         else -> "manual"
     }
 
@@ -101,7 +107,7 @@ object ClipSync : Link.Feature {
     /** Starts the log watcher unless it is already running with system log access. */
     fun startWatcher() {
         if (!hasReadLogs()) return
-        if (Keyboard.isDefault(context)) {
+        if (ShellClip.instrumented || Keyboard.isDefault(context)) {
             // The keyboard sees every clip; no logcat, no consent prompt.
             SetupNotice.clear(context)
             return
@@ -114,6 +120,20 @@ object ClipSync : Link.Feature {
             watcher?.interrupt()
         }
         watcher = Thread({ watch() }, "clip-logwatch").apply { isDaemon = true; start() }
+    }
+
+    /**
+     * [ShellWatcher] borrowed the shell's READ_CLIPBOARD_IN_BACKGROUND: the
+     * listener registered in [start] is now called for every copy, so the
+     * log watcher (and its consent prompt) is not needed.
+     */
+    fun onShellWatcher(active: Boolean) {
+        if (!active) return
+        process?.destroy()
+        watcher?.interrupt()
+        watcher = null
+        logAccess = false
+        SetupNotice.clear(context)
     }
 
     /** True when logd gives us other processes' lines (consent granted). */
@@ -183,10 +203,16 @@ object ClipSync : Link.Feature {
     /** Reads the clipboard; only succeeds while one of our windows has focus. */
     fun readNow(source: String) {
         val cm = context.getSystemService(ClipboardManager::class.java)
-        val clip = try { cm.primaryClip } catch (_: SecurityException) { null } ?: return
+        val clip = try { cm.primaryClip } catch (_: SecurityException) { null } ?: run {
+            if (ShellClip.active) Diag.log("clip change seen, but no read access")
+            return
+        }
         val description = clip.description
         val extras: PersistableBundle? = description?.extras
-        if (extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true) return // passwords, OTPs
+        if (extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true) {
+            Diag.log("clip skipped: marked sensitive")
+            return
+        }
         if (extras?.getBoolean(ClipDescription.EXTRA_IS_REMOTE_DEVICE) == true && source == "listener") {
             // Our own write coming back.
             return
@@ -206,6 +232,7 @@ object ClipSync : Link.Feature {
             currentAt = System.currentTimeMillis()
             val message = JSONObject().put("text", text).put("hash", hash).put("at", currentAt)
             if (!Link.event("clipboard", message)) pending = message else pending = null
+            Diag.log("clip ${if (pending == null) "sent to" else "queued for"} the laptop (${text.length} chars)")
         }
     }
 

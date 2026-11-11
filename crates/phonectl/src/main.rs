@@ -88,6 +88,22 @@ enum Command {
         #[arg(long)]
         qr: bool,
     },
+    /// One-time setup for automatic phone → laptop clipboard: pairs this
+    /// laptop's ADB key, lets phonectl switch wireless debugging, starts the
+    /// clipboard watcher. Needs Wireless debugging > Pair device with pairing code
+    /// open on the phone.
+    SetupClipboard {
+        /// The six-digit code from Wireless debugging > Pair device with pairing code.
+        code: Option<String>,
+        /// Pairing endpoint shown under the code, if mDNS cannot find it (IP:PORT).
+        #[arg(long)]
+        address: Option<std::net::SocketAddr>,
+        /// Skip pairing (this laptop's key is already paired).
+        #[arg(long)]
+        no_pair: bool,
+        #[arg(long, default_value = "10", value_name = "SECONDS")]
+        timeout: u64,
+    },
     /// Talk to the phone over ADB with phonectl's own ADB stack (development).
     #[command(subcommand)]
     Adb(AdbCommand),
@@ -148,6 +164,13 @@ fn main() -> ExitCode {
     };
 
     let result = match cli.command {
+        Command::SetupClipboard { code, address, no_pair, timeout } => runtime
+            .block_on(setup::clipboard(code, address, no_pair, Duration::from_secs(timeout)))
+            .map(|()| exit::OK)
+            .map_err(|e| {
+                eprintln!("phonectl: {e:#}");
+                exit::FAILED
+            }),
         Command::Adb(command) => runtime.block_on(adb_command(command)).map_err(|e| {
             eprintln!("phonectl: {}", describe(&e));
             exit_code_for(&e)
@@ -266,7 +289,7 @@ async fn link_command(command: Command) -> anyhow::Result<u8> {
             }
             Ok(exit::OK)
         }
-        Command::Adb(_) => unreachable!(),
+        Command::Adb(_) | Command::SetupClipboard { .. } => unreachable!(),
     }
 }
 
@@ -298,6 +321,15 @@ async fn request(method: &str) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_str(&line)?)
 }
 
+/// Local wall-clock time for a Unix timestamp (seconds), "HH:MM, D Mon".
+fn clock(unix: i64) -> String {
+    let output = std::process::Command::new("date").args(["-d", &format!("@{unix}"), "+%H:%M, %-d %b"]).output();
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => unix.to_string(),
+    }
+}
+
 fn print_status(s: &serde_json::Value) {
     let name = s["phone"]["name"].as_str().unwrap_or("phone");
     let state = s["state"].as_str().unwrap_or("?");
@@ -322,12 +354,26 @@ fn print_status(s: &serde_json::Value) {
         println!("call       {call}");
     }
     if let Some(mode) = st["permissions"]["clipboard_mode"].as_str() {
+        let can_start = st["shell_watcher"]["can_toggle_adb"] == true;
         let detail = match mode {
-            "keyboard" => "automatic both ways (phonectl Keyboard)",
-            "logcat" => "automatic both ways (log watcher; re-arm after phone reboots)",
-            _ => "laptop → phone only; select phonectl Keyboard on the phone",
+            "shell" => "automatic both ways (shell watcher)".to_string(),
+            "keyboard" => "automatic both ways (phonectl Keyboard)".to_string(),
+            "logcat" => "automatic both ways (log watcher; re-arm after phone reboots)".to_string(),
+            _ if can_start => "laptop → phone only; watcher not running (starts when the phone is on trusted Wi-Fi)".to_string(),
+            _ => "laptop → phone only; run phonectl setup-clipboard once".to_string(),
         };
         println!("clipboard  {detail}");
+        let since = st["shell_watcher"]["since"].as_i64().filter(|t| *t > 0);
+        if let Some(since) = since {
+            println!("watcher    running since {}", clock(since / 1000));
+        }
+        let w = &s["clipboard_watcher"];
+        if let Some(at) = w["last_start"].as_i64() {
+            println!("watcher    last started by this laptop at {}", clock(at));
+        }
+        if let Some(e) = w["last_error"].as_str().or(st["shell_watcher"]["error"].as_str()) {
+            println!("watcher    last error: {e}");
+        }
     }
     println!("notifs     {}", s["notifications"]);
     if let Some(e) = s["error"].as_str() {

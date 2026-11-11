@@ -269,6 +269,13 @@ object StatusMonitor : Link.Feature {
             .put("clipboard_auto", ClipSync.autoAvailable())
             .put("clipboard_mode", ClipSync.mode())
             .put("keyboard", Keyboard.isDefault()))
+        .put("shell_watcher", JSONObject()
+            .put("running", ShellClip.active)
+            .put("instrumented", ShellClip.instrumented)
+            .put("since", ShellClip.since)
+            .put("error", ShellClip.error ?: JSONObject.NULL)
+            .put("can_toggle_adb", AdbWindow.canToggle())
+            .put("adb_on", try { AdbWindow.isOn() } catch (_: Exception) { false }))
 
     private fun granted(p: String) = context.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 

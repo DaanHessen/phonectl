@@ -2,6 +2,7 @@ package com.daanh.phonectl
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
@@ -99,10 +100,26 @@ class MainActivity : Activity() {
     /** `--es pair <string>` from `phonectl setup` over ADB, or a scanned `phonectl:1;…` link. */
     private fun handlePairIntent(intent: Intent?) {
         intent ?: return
-        intent.getStringExtra("pair")?.let { pair(it); return }
+        // Any app or web page can send this intent, so it never pairs on its
+        // own: the owner confirms the laptop's name and address first.
+        intent.getStringExtra("pair")?.let { confirmPair(it); return }
         if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "phonectl") {
-            intent.dataString?.let { pair(Uri.decode(it)) }
+            intent.dataString?.let { confirmPair(Uri.decode(it)) }
         }
+    }
+
+    private fun confirmPair(text: String) {
+        val config = Config.parse(text) ?: run {
+            toast("That is not a phonectl pairing string")
+            return
+        }
+        val replacing = Link.config?.let { "\n\nThis replaces the pairing with ${it.name}." } ?: ""
+        AlertDialog.Builder(this)
+            .setTitle("Pair with this laptop?")
+            .setMessage("${config.name} (${config.host})\n\nIt will receive your clipboard and notifications and can send commands to this phone.$replacing")
+            .setPositiveButton("Pair") { _, _ -> pair(text) }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /**
@@ -119,6 +136,19 @@ class MainActivity : Activity() {
         if (Config.parse(text) == null) return false
         pair(text)
         try { clipboard.clearPrimaryClip() } catch (_: Exception) {}
+        return true
+    }
+
+    private fun offerClipboardPairing(): Boolean {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        val text = try {
+            clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
+        } catch (_: Exception) {
+            null
+        }?.trim() ?: return false
+        if (Config.parse(text) == null) return false
+        try { clipboard.clearPrimaryClip() } catch (_: Exception) {}
+        confirmPair(text)
         return true
     }
 
@@ -173,27 +203,24 @@ class MainActivity : Activity() {
         check("Nearby devices (Bluetooth)", "Fallback link when there is no network", granted(Manifest.permission.BLUETOOTH_CONNECT)) {
             requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 2)
         }
-        check("Display over other apps", "Lets automatic clipboard sync read a new clip", Settings.canDrawOverlays(this)) {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        }
-        val keyboardActive = Keyboard.isDefault(this)
-        check("phonectl Keyboard", if (Keyboard.installed(this)) "Select it as your keyboard: copies on the phone reach the laptop by themselves" else "Install phonectl Keyboard for automatic phone → laptop clipboard", keyboardActive) {
-            if (Keyboard.installed(this)) {
-                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                toast("Turn on phonectl Keyboard, then pick it with the keyboard switcher")
-            } else {
-                toast("Install phonectl Keyboard from the phone store first")
+        when {
+            ShellClip.active -> check("Automatic clipboard", "Copies reach the laptop by themselves (started by the laptop)", true) {}
+            AdbWindow.canToggle() -> check("Automatic clipboard", "Starts by itself when the laptop connects and the phone is on trusted Wi-Fi", false) {
+                toast("The laptop starts it over Wireless debugging; nothing to do here")
             }
-        }
-        if (keyboardActive) {
-            // Nothing else needed for the clipboard.
-        } else if (!granted(Manifest.permission.READ_LOGS)) {
-            check("Clipboard log access", "One-time over ADB: phonectl setup does it", false) {
-                toast("Run on the laptop: phonectl setup")
-            }
-        } else {
-            check("Automatic clipboard", "Android asks once after every restart of the app", ClipSync.logAccess) {
-                ClipSync.startWatcher()
+            Keyboard.isDefault(this) -> check("phonectl Keyboard", "Copies on the phone reach the laptop by themselves", true) {}
+            else -> {
+                check("Automatic clipboard", "One-time: run phonectl setup-clipboard on the laptop", false) {
+                    toast("Run on the laptop: phonectl setup-clipboard")
+                }
+                if (granted(Manifest.permission.READ_LOGS)) {
+                    check("Display over other apps", "Lets the log-based fallback read a new clip", Settings.canDrawOverlays(this)) {
+                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    }
+                    check("Clipboard log fallback", "Android asks once after every restart of the app", ClipSync.logAccess) {
+                        ClipSync.startWatcher()
+                    }
+                }
             }
         }
     }
@@ -243,8 +270,9 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) return
-        // Unpaired and a pairing string was just copied from the QR code: use it.
-        if (Link.config == null && pairFromClipboard()) return
+        // Unpaired and a pairing string was just copied from the QR code:
+        // offer it (another app may have put it there, so ask first).
+        if (Link.config == null && offerClipboardPairing()) return
         ClipSync.readNow("app")
     }
 }

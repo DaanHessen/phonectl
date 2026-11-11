@@ -66,6 +66,10 @@ impl Registry {
 
     /// Calls a method on the phone and waits for its result.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.call_with_timeout(method, params, CALL_TIMEOUT).await
+    }
+
+    pub async fn call_with_timeout(&self, method: &str, params: Value, limit: Duration) -> Result<Value, String> {
         let handle = self.current().ok_or("phone not connected")?;
         let id = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
@@ -74,7 +78,7 @@ impl Registry {
         if handle.tx.send(Outgoing::Message(message)).await.is_err() {
             return Err("phone disconnected".into());
         }
-        match timeout(CALL_TIMEOUT, rx).await {
+        match timeout(limit, rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err("phone disconnected".into()),
             Err(_) => {
@@ -141,6 +145,7 @@ where
     daemon.event("connected", json!({"transport": transport}));
     // Features that sync state on (re)connect.
     daemon.clipboard.on_connected(&daemon);
+    daemon.watcher.on_connected();
 
     // Events are handled in order on their own task, so a feature that calls
     // back into the phone (icon fetch) never blocks this loop from reading
@@ -307,10 +312,11 @@ async fn dispatch_event(daemon: &Shared, topic: &str, data: Value) {
                 if at < previous_at {
                     return;
                 }
-                state.phone.status = Some(data);
+                state.phone.status = Some(data.clone());
                 state.phone.last_seen = Some(now_millis() / 1000);
             }
             daemon.publish();
+            daemon.watcher.on_status(daemon, &data);
             if let Some(call) = call {
                 daemon.media.call_state(&call).await;
             }

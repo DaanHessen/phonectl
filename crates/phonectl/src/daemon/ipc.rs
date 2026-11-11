@@ -120,3 +120,15 @@ async fn subscribe(daemon: &Shared, write: &mut tokio::net::unix::OwnedWriteHalf
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PHONE_CALLS;
+
+    #[test]
+    fn cli_cannot_reach_debugging_or_install_calls() {
+        for privileged in ["adb_open", "adb_close", "install_update", "notification_action", "icon"] {
+            assert!(!PHONE_CALLS.contains(&privileged), "{privileged} must not be callable over IPC");
+        }
+    }
+}
