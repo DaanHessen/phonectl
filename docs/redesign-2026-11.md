@@ -167,7 +167,36 @@ still open (the notification center has no inline text input).
   asks for this on its setup screen) and that Tailscale is set as the
   always-on VPN.
 
-## 6. Sources
+## 6. One-time setup on the phone
+
+None of this needs USB or wireless debugging; leave Developer options off.
+
+1. In Obtainium (the owner's phone store), update **phonectl** to 0.2.0 and
+   install **phonectl Keyboard**. Both are signed with the same key as the
+   installed app, so phonectl updates in place and keeps its pairing.
+2. Settings → System → Keyboard → On-screen keyboard (Manage keyboards) →
+   turn on **phonectl Keyboard**. Android shows its standard warning that a
+   keyboard can collect what you type; accept it. If Android says
+   "Restricted setting": App info of phonectl Keyboard → ⋮ → Allow restricted
+   settings, then try again.
+3. Make it the keyboard in use: Settings → System → Keyboard → Default
+   keyboard → phonectl Keyboard. Alternatively, tap the keyboard icon in the
+   navigation bar while typing.
+4. Optional: Dutch. Open phonectl Keyboard settings → Languages & layouts →
+   add Nederlands, and load the Dutch dictionary from the link HeliBoard shows
+   there. For glide typing, load the gesture library from Settings → Gesture
+   typing (HeliBoard explains where to get it).
+5. Open the phonectl app. "phonectl Keyboard", "Battery: unrestricted" and
+   "Notification access" should all show ✓. Tap any ✗ to fix it.
+6. Tailscale app: Android Settings → Network → VPN → Tailscale (gear) →
+   Always-on VPN on. Set Tailscale's battery use to Unrestricted too.
+
+Check on the laptop: `phonectl status` shows `clipboard  automatic both ways
+(phonectl Keyboard)`. Copy something on the phone and paste it on the laptop.
+`phonectl type "hello" --key enter` types into the focused field on the
+phone.
+
+## 7. Sources
 
 * [AOSP ClipboardService.java](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/clipboard/ClipboardService.java): `clipboardAccessAllowed` allows READ_CLIPBOARD_IN_BACKGROUND holders, the default IME, the focused uid, content-capture and augmented-autofill services. Listeners only get `dispatchPrimaryClipChanged` after the same check. The app-op is noted *after* that check, so `appops … allow` cannot widen access.
 * [Android 10 privacy changes](https://developer.android.com/about/versions/10/privacy/changes): "Unless your app is the default input method editor (IME) or is the app that currently has focus, your app cannot access clipboard data."
@@ -182,7 +211,7 @@ still open (the notification center has no inline text input).
 * [HeliBoard](https://github.com/HeliBorg/HeliBoard): GPL-3.0 keyboard, v4.2 (2026-10-12). `ClipboardHistoryManager` already listens for clip changes, which is our hook point.
 * phonectl's own journal, 2026-10-28 to 2026-11-11: the numbers in section 1.
 
-## 7. Verification
+## 8. Verification
 
 * Laptop: `cargo test --release` passes 72 tests. The new daemon was run
   against `tests/fake_phone.py` (the real link protocol) on a private D-Bus
