@@ -7,3 +7,4 @@
 /keyboard/upstream
 /keyboard/*.apk
 /keyboard/crash-*.txt
+.work/

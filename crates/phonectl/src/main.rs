@@ -52,9 +52,22 @@ enum Command {
     },
     /// Set the phone's ringer: normal, vibrate or silent.
     Ringer { mode: String },
+    /// Switch the phone's Wi-Fi hotspot on or off. Turning it on asks on the
+    /// phone first when the phone is locked.
+    Hotspot {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
+    /// Send a link to the phone; it opens when you tap its notification.
+    Share { url: String },
+    /// Switch Do Not Disturb on the phone (it also follows the laptop's).
+    Dnd {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
     /// Control media playing on the phone: toggle, play, pause, next, previous.
     Media { action: String },
-    /// Type on the phone (needs phonectl Keyboard as the phone's keyboard).
+    /// Type into the focused field on the phone (any keyboard; needs the phone unlocked).
     /// `phonectl type "hello"`, `phonectl type --key enter`, `echo hi | phonectl type -`.
     Type {
         /// Text to type into the focused field; `-` reads stdin.
@@ -278,6 +291,9 @@ async fn link_command(command: Command) -> anyhow::Result<u8> {
         }
         Command::Ring { stop } => phone_call("ring", serde_json::json!({"on": !stop})).await,
         Command::Ringer { mode } => phone_call("ringer", serde_json::json!({"mode": mode})).await,
+        Command::Hotspot { state } => phone_call("hotspot", serde_json::json!({"on": state == "on"})).await,
+        Command::Dnd { state } => phone_call("dnd", serde_json::json!({"on": state == "on"})).await,
+        Command::Share { url } => phone_call("open_link", serde_json::json!({"url": url})).await,
         Command::Media { action } => {
             let action = if action == "toggle" { "play_pause".to_string() } else { action };
             phone_call("media_action", serde_json::json!({"action": action})).await
@@ -319,6 +335,9 @@ async fn phone_call(method: &str, params: serde_json::Value) -> anyhow::Result<u
     let line = BufReader::new(read).lines().next_line().await?.unwrap_or_default();
     let reply: serde_json::Value = serde_json::from_str(&line)?;
     if reply["ok"] == true {
+        if let Some(pending) = reply["data"]["pending"].as_str() {
+            println!("waiting: {pending} (`phonectl events` shows the answer)");
+        }
         Ok(exit::OK)
     } else {
         anyhow::bail!("{}", reply["error"].as_str().unwrap_or("failed"))
@@ -370,6 +389,13 @@ fn print_status(s: &serde_json::Value) {
     }
     if let Some(call) = st["call"].as_str().filter(|c| *c != "idle") {
         println!("call       {call}");
+    }
+    if let Some(dnd) = st["dnd"].as_bool() {
+        println!("dnd        {}", if dnd { "on" } else { "off" });
+    }
+    if let Some(on) = st["hotspot"]["on"].as_bool() {
+        let can = if st["hotspot"]["can_toggle"] == false { " (switch it on the phone)" } else { "" };
+        println!("hotspot    {}{can}", if on { "on" } else { "off" });
     }
     if let Some(mode) = st["permissions"]["clipboard_mode"].as_str() {
         let can_start = st["shell_watcher"]["can_toggle_adb"] == true;

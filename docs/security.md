@@ -87,8 +87,16 @@ updates), `ipc::tests` and `watcher::tests` (Rust).
     feature cannot be reached until it is given a rule.
   - Each method has its own per-minute limit (sliding window); calls over it
     are refused.
-  - Methods marked harmful (`type_text` today; install, screen and hotspot
-    as they are added) are refused while the phone is locked.
+  - Methods marked harmful (`type_text`) are refused while the phone is
+    locked. Methods marked confirm (`hotspot` on) run while the phone is
+    unlocked; while it is locked they wait for a tap on Allow in a
+    notification (below).
+  - The laptop daemon marks calls from AI agents (callers in the `ai.slice`
+    cgroup, where Room B and its sub-agents run; a caller whose cgroup cannot
+    be read counts as an agent) with `origin: agent`. For those, every
+    confirm or harmful method waits for a tap on the phone, even when it is
+    unlocked, and the list shows "(AI agent)". Agents cannot use `phonectl
+    update` at all.
   - Every call, run or refused, is written to "Recent laptop actions" in the
     app (last 100, kept across restarts, repeats folded into one line with a
     count), and to the app log. Arguments are not shown (they can hold
@@ -98,6 +106,111 @@ updates), `ipc::tests` and `watcher::tests` (Rust).
   it afterwards.
 - **Turn off:** unpair in the app (or force-stop it); the laptop then has no
   way in.
+
+### Confirmation on the phone
+
+- **Door:** a notification with Allow and Deny that runs one laptop call.
+- **Kept shut:**
+  - Allow runs exactly the call that was asked (method and the cleaned
+    parameters), once, and only within 60 seconds; a new request replaces
+    the previous one. The answer carries a random 128-bit token compared in
+    constant time.
+  - The buttons go to `ConfirmReceiver`, which is not exported, through
+    immutable PendingIntents; other apps cannot send it anything.
+  - The laptop cannot press them: phonectl's own notifications are never
+    mirrored, and `notification_action`, `notification_open` and
+    `notification_dismiss` accept only notifications that were mirrored to
+    the laptop, and never phonectl's own (before 0.5.0 they accepted any
+    notification key, including ones the laptop was never shown).
+- **Residual risk:** someone holding the locked phone can tap Allow (out of
+  scope: physical access). The notification shows on the lock screen.
+- **Turn off:** Settings > Notifications > phonectl > "Laptop requests" off;
+  requests then cannot be confirmed and do not run.
+
+### Hotspot (shell TETHER_PRIVILEGED, borrowed per switch)
+
+- **Door:** switching the phone's Wi-Fi hotspot on lets devices that know its
+  password onto the phone's mobile data; switching it off drops whatever
+  uses it.
+- **Kept shut:**
+  - `TETHER_PRIVILEGED` is adopted only around one start or stop call and
+    given back when Android answers, after 30 seconds at the latest
+    (`Borrow.TETHER`). The public `TetheringManager` API is used; the saved
+    hotspot name, password and band are never read or changed.
+  - Parameters are exactly `{"on": true|false}`, checked by the daemon and
+    again by the app. 6 switches per minute.
+  - On needs the phone unlocked or a tap on Allow; agents always need the
+    tap. Off is allowed without a tap for the owner (it only closes the
+    door), but not for agents.
+  - Without the watcher it cannot switch (status says `can_toggle: false`).
+- **Residual risk:** with the phone unlocked, the paired laptop (the owner's
+  session, not agents) can switch the hotspot without a tap.
+- **Turn off:** there is no separate switch yet; force-stopping phonectl or
+  ending the watcher (reboot) removes it.
+
+### Typing into the focused field (shell INJECT_EVENTS, borrowed per call)
+
+- **Door:** `INJECT_EVENTS` lets phonectl send input to any app on screen.
+- **Kept shut:**
+  - Borrowed only for one `type_text` call and given back right after, 30
+    seconds at most (`Borrow.INJECT`).
+  - Only key events: characters through Android's virtual key map, plus the
+    keys in `ShellClip.KEYS` (enter, newline, backspace, delete, tab,
+    arrows, escape). No touches, swipes or raw input injection anywhere in
+    the code (test `watcherAdoptsOnlyListedPermissions`).
+  - Text only: at most 4000 characters, no control characters except
+    newline and tab.
+  - Refused while the phone is locked (so it can never type into the lock
+    screen). From AI agents it always waits for a tap on Allow.
+  - Text the key map cannot produce (emoji, most accents) is pasted: it is
+    put on the phone's clipboard and pasted with the paste key.
+- **Residual risk:** it types into whatever has focus at that moment,
+  including another app if focus moved. With phonectl Keyboard selected,
+  typing goes through the keyboard instead (no shell permission).
+- **Turn off:** unpair or force-stop phonectl; without the watcher it cannot
+  type.
+
+### Find my phone (`phonectl ring`)
+
+- **Door:** the laptop can make the phone ring at full alarm volume, also on
+  silent.
+- **Kept shut:** 6 per minute; stops after 60 seconds, on any touch or key on
+  the "Touch anywhere to stop" screen (`RingActivity`, not exported, shown
+  over the lock screen through a full-screen notification), on the
+  notification's Stop, or on `phonectl ring --stop`. The alarm volume is put
+  back afterwards. Stops are listed.
+- **Residual risk:** a nuisance at most; it cannot unlock anything (the stop
+  screen shows over the lock screen and only stops the ring).
+- **Turn off:** Settings > Notifications > phonectl > "Find my phone" off
+  hides the stop screen (the ring still stops after 60 seconds).
+
+### Links both ways
+
+- **Door:** a link from the laptop could lead the phone's browser somewhere;
+  a link from the phone could lead the laptop's browser somewhere.
+- **Kept shut:** only one http or https link of at most 2048 characters,
+  checked on both sides (no `intent:`, `file:`, `content:`, `javascript:`).
+  Neither side opens a link by itself: the phone shows a notification that
+  opens it on a tap; the laptop shows a notification with an Open button and
+  runs `xdg-open URL` (an argument, not a shell string) only on that click.
+  10 links per minute from the laptop.
+- **Residual risk:** any app on the phone can open "Send to laptop" and so
+  show a link notification on the laptop (and put text on its clipboard); it
+  only opens if the owner clicks it.
+- **Turn off:** Settings > Notifications > phonectl > "Links from the
+  laptop" off; on the laptop, ignore or dismiss the notification.
+
+### Do Not Disturb sync
+
+- **Door:** the laptop can switch the phone's Do Not Disturb (calls could be
+  silenced).
+- **Kept shut:** only on (Android's priority mode, so the owner's DND
+  exceptions such as starred contacts and alarms still ring) or off. Uses
+  the notification listener the app already has, or DND access if granted;
+  no shell permission. 10 per minute, listed. Only changes are mirrored,
+  never the state at startup or reconnect.
+- **Residual risk:** the paired laptop can silence non-priority calls.
+- **Turn off:** `dnd_sync = false` in `~/.config/phonectl/config.toml`.
 
 ### Silent updates of the owner's own apps (shell INSTALL_PACKAGES, borrowed per install)
 
@@ -189,8 +302,10 @@ updates), `ipc::tests` and `watcher::tests` (Rust).
 - The socket lives in `$XDG_RUNTIME_DIR/phonectl` (mode 0700, owner only).
 - Through it, the CLI can call only the phone methods in `PHONE_CALLS`
   (`ring`, `ringer`, `media_action`, `test_notification`, `diag`,
-  `type_text`, `store_check`). It cannot open wireless debugging or run ADB
-  commands. The phone applies its own gate on top (above).
+  `type_text`, `store_check`, `dnd`, `hotspot`, `open_link`). It cannot
+  open wireless debugging or run ADB commands. Parameters of `dnd` and
+  `hotspot` are rebuilt as `{"on": bool}`, of `open_link` as `{"url": …}`
+  after the link check. The phone applies its own gate on top (above).
 - `update` sends an APK to the phone; the app refuses it unless it is
   phonectl, signed with the pinned key and newer, and Android then asks the
   owner to confirm the install.
@@ -205,6 +320,34 @@ updates), `ipc::tests` and `watcher::tests` (Rust).
 - Notification listener: binds only via `BIND_NOTIFICATION_LISTENER_SERVICE`
   (system only).
 
+## Planned: phone screen in a laptop window (threat model, not built yet)
+
+- **Door:** everything on the phone's screen (messages, banking, one-time
+  codes) becomes visible on the laptop, and to anything on the laptop that
+  can read that window or the stream.
+- **How it will be kept shut:**
+  - Off by default. Only the phone starts a session: a button in the app,
+    then the fingerprint or PIN (BiometricPrompt with device credential),
+    then Android's own screen-capture consent. No laptop method starts,
+    extends or re-enables it; the gate has no rule for it, so a laptop call
+    is refused as an unknown method.
+  - One session at a time, view only (no input from the laptop). It ends
+    when the laptop window closes, after 5 minutes without a frame change
+    or laptop activity, when the phone locks, from the persistent
+    notification's Stop, or when the link drops. A new session needs the
+    fingerprint again.
+  - A persistent notification ("Screen shared with <laptop>", Stop) for the
+    whole session (Android also shows its own capture indicator).
+  - The stream goes only to the paired laptop over the authenticated link,
+    never to a listening port. Apps that set FLAG_SECURE (banking, password
+    fields) show black, as Android enforces.
+  - On the laptop the window is owned by the daemon in the owner's session;
+    calls from AI agents cannot open or read it.
+- **Residual risk:** for the length of a session, whoever controls the
+  owner's laptop session sees the phone screen.
+- **Turn off:** it is off unless started on the phone; Stop in the
+  notification ends it.
+
 ## Exported components
 
 | Component | Why exported | Guard |
@@ -214,6 +357,10 @@ updates), `ipc::tests` and `watcher::tests` (Rust).
 | `NotifListener` | Notification access | `BIND_NOTIFICATION_LISTENER_SERVICE` (system only) |
 | `ClipTile` | Quick settings tile | `BIND_QUICK_SETTINGS_TILE` (system only) |
 | `KeyboardBridge` | phonectl Keyboard → app | Signature permission `BRIDGE` |
+
+Not exported (only the app's own PendingIntents reach them): `UpdateReceiver`,
+`ConfirmReceiver`, `RingStopReceiver`, `BootReceiver`, `ClipReadActivity`,
+`RingActivity`.
 
 No content providers. The `ShellWatcher` instrumentation is declared but can
 only be started from a shell (see above).
@@ -241,3 +388,7 @@ Each line: what was tried, and what happened.
 | Store serves a page with a redirect to another host | Not followed |
 | Laptop pushes an APK of another app with `update` | Refused: only phonectl, pinned key, newer |
 | Laptop tries to switch silent updates on | No method for it; only the app's switch writes it (test `onlyThePhoneSwitchesSilentUpdates`) |
+| Laptop presses Allow on phonectl's own confirmation via `notification_action` with a guessed key | Before 0.5.0: any key was accepted. Now refused: only mirrored notifications, never phonectl's own (test `laptopCannotTapOwnNotifications`) |
+| Agent in Room B calls `hotspot` on an unlocked phone | Daemon marks it `origin: agent`; the phone asks (test `agentCallsAlwaysAsk`, `agents_are_recognised_by_cgroup_and_unknown_callers_count_as_agents`) |
+| Client sends `hotspot {"on": "true", "ssid": …}` | Rejected by the daemon (test `switch_params_are_a_single_bool`) and by the app (`as? Boolean`) |
+| Agent pushes an APK with `phonectl update` | Refused by the daemon ("agents cannot push app updates") |

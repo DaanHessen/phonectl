@@ -197,12 +197,17 @@ class NotifListener : NotificationListenerService() {
             }
             val service = instance ?: throw IllegalStateException("notification access is off")
             val key = params?.optString("key") ?: throw IllegalArgumentException("key")
+            // Only notifications the laptop was shown, never phonectl's own
+            // (its confirmation prompts must take a real tap on the phone).
+            if (!mirrored.containsKey(key)) throw IllegalArgumentException("not a mirrored notification")
+            if (key.split("|").getOrNull(1) == context.packageName) throw IllegalArgumentException("not a mirrored notification")
             if (method == "notification_dismiss") {
                 service.cancelNotification(key)
                 return Unit
             }
             val sbn = service.getActiveNotifications(arrayOf(key))?.firstOrNull()
                 ?: throw IllegalStateException("notification is gone")
+            if (sbn.packageName == context.packageName) throw IllegalArgumentException("not a mirrored notification")
             val intent: PendingIntent = if (method == "notification_open") {
                 sbn.notification.contentIntent ?: throw IllegalStateException("nothing to open")
             } else {

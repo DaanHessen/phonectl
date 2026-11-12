@@ -2,9 +2,14 @@ package com.daanh.phonectl
 
 import android.app.Instrumentation
 import android.app.UiAutomation
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 
 /**
  * Automatic phone → laptop clipboard with Gboard (or any keyboard) in use.
@@ -41,7 +46,7 @@ class ShellWatcher : Instrumentation() {
         val error = try {
             val automation = getUiAutomation(UiAutomation.FLAG_DONT_USE_ACCESSIBILITY)
             automation.adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND)
-            ShellClip.attach(automation)
+            ShellClip.attach(automation, this)
             null
         } catch (e: Throwable) {
             e.javaClass.simpleName + (e.message?.let { ": ${it.take(80)}" } ?: "")
@@ -55,6 +60,21 @@ class ShellWatcher : Instrumentation() {
 // Hidden in the SDK (signature permissions); the shell holds them.
 private const val READ_CLIPBOARD_IN_BACKGROUND = "android.permission.READ_CLIPBOARD_IN_BACKGROUND"
 private const val INSTALL_PACKAGES = "android.permission.INSTALL_PACKAGES"
+private const val TETHER_PRIVILEGED = "android.permission.TETHER_PRIVILEGED"
+private const val INJECT_EVENTS = "android.permission.INJECT_EVENTS"
+
+/**
+ * Shell permissions borrowed for one capability at a time, on top of the
+ * clipboard permission, each with the longest time it may be held.
+ */
+enum class Borrow(internal val permission: String, internal val maxMs: Long) {
+    /** A silent store update ([StoreUpdater]); Android checks it until the install ends. */
+    INSTALL(INSTALL_PACKAGES, 2 * 60_000L),
+    /** Starting or stopping the hotspot ([Hotspot]). */
+    TETHER(TETHER_PRIVILEGED, 30_000L),
+    /** Typing text from the laptop into the focused field ([ShellClip.type]): key events only. */
+    INJECT(INJECT_EVENTS, 30_000L),
+}
 
 /**
  * State of the shell clipboard watcher, shared by the app and the
@@ -63,34 +83,91 @@ private const val INSTALL_PACKAGES = "android.permission.INSTALL_PACKAGES"
  */
 object ShellClip {
     private var automation: UiAutomation? = null
+    private var instrumentation: Instrumentation? = null
     private val lock = Object()
-
-    internal fun attach(ui: UiAutomation) = synchronized(lock) { automation = ui }
-
     private val main = Handler(Looper.getMainLooper())
-    private val giveBack = Runnable { returnInstallPermission("time limit") }
+    private val borrowed = HashMap<Borrow, Runnable>()
+
+    internal fun attach(ui: UiAutomation, watcher: Instrumentation) = synchronized(lock) {
+        automation = ui
+        instrumentation = watcher
+    }
+
+    /** Keys `phonectl type --key` may press. */
+    val KEYS: Map<String, Int> = mapOf(
+        "enter" to KeyEvent.KEYCODE_ENTER,
+        "newline" to KeyEvent.KEYCODE_ENTER,
+        "backspace" to KeyEvent.KEYCODE_DEL,
+        "delete" to KeyEvent.KEYCODE_FORWARD_DEL,
+        "tab" to KeyEvent.KEYCODE_TAB,
+        "left" to KeyEvent.KEYCODE_DPAD_LEFT,
+        "right" to KeyEvent.KEYCODE_DPAD_RIGHT,
+        "up" to KeyEvent.KEYCODE_DPAD_UP,
+        "down" to KeyEvent.KEYCODE_DPAD_DOWN,
+        "escape" to KeyEvent.KEYCODE_ESCAPE,
+    )
 
     /**
-     * Borrows INSTALL_PACKAGES as well, until [returnInstallPermission] (the
-     * install finished) or two minutes at most. Android checks it while the
-     * install runs, after `commit()` returns, so it cannot be scoped to one
-     * call. Only [StoreUpdater] calls this, after checking the APK's package,
-     * version and signing certificate. False when the watcher is not running.
+     * Types [text] into whatever has focus, then presses [key], with key events
+     * only (never touches). INJECT_EVENTS is borrowed for this call alone.
+     * Characters the virtual key map cannot produce (emoji, most accents) are
+     * pasted instead, which replaces the phone's clipboard with [text]. Must
+     * not run on the main thread (each event waits until it is delivered).
      */
-    fun borrowInstallPermission(): Boolean = synchronized(lock) {
+    fun type(context: Context, text: String?, key: String?) {
+        val watcher = synchronized(lock) { instrumentation } ?: throw IllegalStateException("the clipboard watcher is not running")
+        val code = key?.let { KEYS[it] ?: throw IllegalArgumentException("unknown key $it") }
+        if (!borrow(Borrow.INJECT)) throw IllegalStateException("the clipboard watcher is not running")
+        try {
+            if (!text.isNullOrEmpty()) {
+                val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
+                if (events != null) {
+                    for (event in events) watcher.sendKeySync(event)
+                } else {
+                    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("phonectl", text))
+                    watcher.sendKeyDownUpSync(KeyEvent.KEYCODE_PASTE)
+                }
+            }
+            if (code != null) {
+                val meta = if (key == "newline") KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
+                val now = android.os.SystemClock.uptimeMillis()
+                watcher.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, meta))
+                watcher.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, meta))
+            }
+        } finally {
+            giveBack(Borrow.INJECT, "typed")
+        }
+    }
+
+    /**
+     * Adds [what]'s permission to the adopted set until [giveBack] or its time
+     * limit. Callers check their request first (package, signer, version; or
+     * the gate in [Actions]). False when the watcher is not running.
+     */
+    fun borrow(what: Borrow): Boolean = synchronized(lock) {
         val ui = automation ?: return false
-        ui.adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND, INSTALL_PACKAGES)
-        main.removeCallbacks(giveBack)
-        main.postDelayed(giveBack, 2 * 60_000L)
-        Diag.log("install permission borrowed")
+        borrowed.remove(what)?.let(main::removeCallbacks)
+        val limit = Runnable { giveBack(what, "time limit") }
+        borrowed[what] = limit
+        adopt(ui)
+        main.postDelayed(limit, what.maxMs)
+        Diag.log("${what.name.lowercase()} permission borrowed")
         true
     }
 
-    fun returnInstallPermission(reason: String): Unit = synchronized(lock) {
-        main.removeCallbacks(giveBack)
-        val ui = automation ?: return@synchronized
-        ui.adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND)
-        Diag.log("install permission returned ($reason)")
+    fun giveBack(what: Borrow, reason: String): Unit = synchronized(lock) {
+        val limit = borrowed.remove(what) ?: return@synchronized
+        main.removeCallbacks(limit)
+        automation?.let(::adopt)
+        Diag.log("${what.name.lowercase()} permission returned ($reason)")
+    }
+
+    /** What is borrowed right now (for the status and tests). */
+    fun borrowedNow(): List<String> = synchronized(lock) { borrowed.keys.map { it.name.lowercase() } }
+
+    private fun adopt(ui: UiAutomation) {
+        val permissions = arrayOf(READ_CLIPBOARD_IN_BACKGROUND) + borrowed.keys.map { it.permission }
+        ui.adoptShellPermissionIdentity(*permissions)
     }
 
     /** This process was started by `am instrument` (set before App.onCreate). */

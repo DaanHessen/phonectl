@@ -22,6 +22,10 @@ class App : Application() {
         StoreUpdater.init(this)
         NotifListener.init(this)
         PhoneControls.init(this)
+        Confirm.init(this)
+        Dnd.init(this)
+        Hotspot.init(this)
+        Links.init(this)
         Updater.init(this)
         Link.start(this)
     }

@@ -145,3 +145,27 @@ Every call from the laptop goes through `Actions.admit` in `Link` before any
 feature sees it: the method must be in `Actions.RULES`, under its per-minute
 limit, and harmful methods need the phone unlocked. The app shows the last
 calls (and refusals) under "Recent laptop actions".
+
+# Hotspot
+
+`phonectl hotspot on|off` (or the switch in the bar's phone panel) becomes the
+phone method `hotspot {on}`. While the watcher runs, the app adds
+`TETHER_PRIVILEGED` to the borrowed shell identity, calls the public
+`TetheringManager.startTethering` / `stopTethering` with a plain Wi-Fi
+request (the saved hotspot settings are used as they are), and gives the
+permission back when Android answers. Its state comes from a
+`TetheringEventCallback` (only `ACCESS_NETWORK_STATE`) and is reported as
+`status.hotspot {on, can_toggle}`. On a locked phone, or for a call from an AI
+agent, the app first posts "Laptop asks to turn the hotspot on" with Allow and
+Deny; the answer reaches the laptop as an `action_result` event.
+
+# Do Not Disturb sync
+
+The daemon follows the laptop's notification server over D-Bus
+(`fr.emersion.Mako`, `Modes` property; mako or latent-bar's built-in server)
+and the phone's `status.dnd` (from `ACTION_INTERRUPTION_FILTER_CHANGED`).
+When one side changes and the other side differs, it sets the other side:
+`SetModes` with or without `do-not-disturb` on the laptop, `dnd {on}` on the
+phone (priority mode, through the notification listener). States found at
+startup or after a reconnect are not pushed, so neither side wins by just
+connecting.

@@ -340,37 +340,50 @@ object Link {
                 val id = message.optLong("id")
                 val method = message.optString("method")
                 val params = message.optJSONObject("params")
-                Actions.admit(method)?.let { refusal ->
-                    from.send(Protocol.result(id, null, "refused: $refusal"))
-                    return
-                }
-                var reply: JSONObject = Protocol.result(id, null, "unknown method $method")
-                for (f in features) {
-                    try {
-                        val data = f.onCall(method, params) ?: continue
-                        if (data is java.util.concurrent.CompletableFuture<*>) {
-                            // Slow calls answer later, off the link thread.
-                            data.whenComplete { value, error ->
-                                val cause = (error as? java.util.concurrent.CompletionException)?.cause ?: error
-                                Actions.record(method, if (cause != null) "failed: ${cause.message ?: cause.javaClass.simpleName}" else "done")
-                                from.send(
-                                    if (cause != null) Protocol.result(id, null, cause.message ?: cause.javaClass.simpleName)
-                                    else Protocol.result(id, if (value == Unit) null else value)
-                                )
-                            }
-                            return
-                        }
-                        reply = Protocol.result(id, if (data == Unit) null else data)
-                        break
-                    } catch (e: Exception) {
-                        reply = Protocol.result(id, null, e.message ?: e.javaClass.simpleName)
-                        break
+                val fromAgent = message.optString("origin") == "agent"
+                when (val admission = Actions.admit(method, params, fromAgent = fromAgent)) {
+                    is Actions.Admission.Refuse -> from.send(Protocol.result(id, null, "refused: ${admission.reason}"))
+                    is Actions.Admission.Ask -> {
+                        Confirm.ask(method, params)
+                        from.send(Protocol.result(id, JSONObject().put("pending", "confirm on the phone")))
                     }
+                    is Actions.Admission.Run -> invoke(method, params) { result -> from.send(result.put("id", id)) }
                 }
-                Actions.record(method, reply.optString("error").takeIf { it.isNotEmpty() }?.let { "failed: $it" } ?: "done")
-                from.send(reply)
             }
         }
+    }
+
+    /**
+     * Runs a call that passed the gate and records its outcome. [done] gets a
+     * result message without an id. Also used for calls the owner confirmed
+     * on the phone ([Confirm]).
+     */
+    fun invoke(method: String, params: JSONObject?, done: (JSONObject) -> Unit) {
+        var reply: JSONObject = Protocol.result(0, null, "unknown method $method")
+        for (f in features) {
+            try {
+                val data = f.onCall(method, params) ?: continue
+                if (data is java.util.concurrent.CompletableFuture<*>) {
+                    // Slow calls answer later, off the link thread.
+                    data.whenComplete { value, error ->
+                        val cause = (error as? java.util.concurrent.CompletionException)?.cause ?: error
+                        Actions.record(method, if (cause != null) "failed: ${cause.message ?: cause.javaClass.simpleName}" else "done")
+                        done(
+                            if (cause != null) Protocol.result(0, null, cause.message ?: cause.javaClass.simpleName)
+                            else Protocol.result(0, if (value == Unit) null else value)
+                        )
+                    }
+                    return
+                }
+                reply = Protocol.result(0, if (data == Unit) null else data)
+                break
+            } catch (e: Exception) {
+                reply = Protocol.result(0, null, e.message ?: e.javaClass.simpleName)
+                break
+            }
+        }
+        Actions.record(method, reply.optString("error").takeIf { it.isNotEmpty() }?.let { "failed: $it" } ?: "done")
+        done(reply)
     }
 
     private fun hasNetwork(): Boolean {

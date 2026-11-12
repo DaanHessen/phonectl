@@ -67,7 +67,7 @@ class UpdateReceiver : BroadcastReceiver() {
         val store = intent.getStringExtra(EXTRA_STORE)
         if (store != null) {
             // Silent store install: never show a prompt (Obtainium still offers it).
-            ShellClip.returnInstallPermission("install done")
+            ShellClip.giveBack(Borrow.INSTALL, "install done")
             val result = when (status) {
                 PackageInstaller.STATUS_SUCCESS -> "installed"
                 PackageInstaller.STATUS_PENDING_USER_ACTION -> "would need a tap; left to Obtainium"

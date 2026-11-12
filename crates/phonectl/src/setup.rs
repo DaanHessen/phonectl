@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn pairing_string_shape() {
-        let config = Config { name: "omarchy".into(), port: 47201, dismiss_on_phone: true };
+        let config = Config { name: "omarchy".into(), port: 47201, dismiss_on_phone: true, dnd_sync: true };
         let s = pairing_string(&config, &[0u8; 32], "100.1.2.3", Some("00:11:22:33:44:55"));
         assert!(s.starts_with("phonectl:1;host=100.1.2.3;port=47201;name=omarchy;bt=00:11:22:33:44:55;key="));
         assert!(!s.contains(' '));

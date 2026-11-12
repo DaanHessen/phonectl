@@ -30,6 +30,7 @@ object Keyboard : Link.Feature {
     const val ACTION_CRASH = "com.daanh.phonectl.action.CRASH"
 
     private lateinit var context: Context
+    const val MAX_TYPED = 4000
 
     fun init(ctx: Context) {
         context = ctx.applicationContext
@@ -48,13 +49,24 @@ object Keyboard : Link.Feature {
         false
     }
 
-    /** Text typed into the focused field on the phone, sent from the laptop. */
-    fun type(text: String?, key: String?) {
-        if (!isDefault()) throw IllegalStateException("phonectl Keyboard is not the active keyboard on the phone")
-        val intent = Intent(ACTION_TYPE).setPackage(PACKAGE)
-        if (!text.isNullOrEmpty()) intent.putExtra("text", text)
-        if (!key.isNullOrEmpty()) intent.putExtra("key", key)
-        context.sendBroadcast(intent, PERMISSION)
+    private val typist = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "typist") }
+
+    /**
+     * Text typed into the focused field on the phone, sent from the laptop:
+     * through phonectl Keyboard when it is the keyboard, otherwise as key
+     * events through the shell identity (any keyboard, see [ShellClip.type]).
+     */
+    fun type(text: String?, key: String?): Any {
+        if (isDefault()) {
+            val intent = Intent(ACTION_TYPE).setPackage(PACKAGE)
+            if (!text.isNullOrEmpty()) intent.putExtra("text", text)
+            if (!key.isNullOrEmpty()) intent.putExtra("key", key)
+            context.sendBroadcast(intent, PERMISSION)
+            return Unit
+        }
+        if (!ShellClip.active) throw IllegalStateException("typing needs the clipboard watcher running (phonectl setup-clipboard)")
+        if (key != null && key !in ShellClip.KEYS) throw IllegalArgumentException("unknown key $key")
+        return java.util.concurrent.CompletableFuture.supplyAsync({ ShellClip.type(context, text, key); Unit }, typist)
     }
 
     override fun onCall(method: String, params: JSONObject?): Any? {
@@ -63,9 +75,9 @@ object Keyboard : Link.Feature {
         val text = params?.takeUnless { it.isNull("text") }?.optString("text")?.takeIf { it.isNotEmpty() }
         val key = params?.takeUnless { it.isNull("key") }?.optString("key")?.takeIf { it.isNotEmpty() }
         if (text == null && key == null) throw IllegalArgumentException("text or key")
-        if (text != null && text.length > Protocol.MAX_CLIP) throw IllegalArgumentException("text too long")
-        type(text, key)
-        return Unit
+        if (text != null && text.length > MAX_TYPED) throw IllegalArgumentException("text too long (at most $MAX_TYPED characters)")
+        if (text != null && text.any { it.isISOControl() && it != '\n' && it != '\t' }) throw IllegalArgumentException("control characters")
+        return type(text, key)
     }
 }
 

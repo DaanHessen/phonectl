@@ -166,15 +166,18 @@ notifications and calls just show up. The CLI covers the rest:
 phonectl status [--json]      phone and link status
 phonectl clip                 send the laptop clipboard to the phone now
 phonectl connect              ask the phone to connect now
-phonectl ring [--stop]        find my phone (rings even on silent)
+phonectl ring [--stop]        find my phone (full volume even on silent; a touch stops it)
+phonectl share URL            send a link to the phone (opens when you tap it)
 phonectl ringer MODE          normal | vibrate | silent
+phonectl hotspot on|off       the phone's Wi-Fi hotspot (asks on the phone when locked)
+phonectl dnd on|off           Do Not Disturb on the phone (also follows the laptop's)
 phonectl media ACTION         toggle | play | pause | next | previous
 phonectl test-notification    post a test notification on the phone
 phonectl events               live link events
 phonectl diag                 the phone app's own log, no ADB needed
 phonectl update               install a new app build over the link
 phonectl update-apps          the phone updates the owner's own apps from the phone store now
-phonectl type TEXT [--key K]  type on the phone (phonectl Keyboard); `-` = stdin
+phonectl type TEXT [--key K]  type into the focused field on the unlocked phone; `-` = stdin
 phonectl setup-clipboard      one-time setup for automatic phone → laptop clipboard
 ```
 
@@ -219,7 +222,7 @@ _Design notes and research are in [docs](docs/)._
 - [x] Automatic phone → laptop clipboard with any keyboard (shell-identity watcher)
 - [x] Silent updates of the owner's own apps from the phone store
 - [x] Command gate: whitelist, rate limits, recent actions list on the phone
-- [ ] Do Not Disturb sync and hotspot toggle
+- [x] Do Not Disturb sync and hotspot toggle
 - [ ] Bluetooth fallback tested end to end
 - [ ] Reply to messages from the laptop
 - [ ] Re-check everything on Android 17

@@ -43,6 +43,10 @@ pub enum Message {
         method: String,
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         params: serde_json::Value,
+        /// `"agent"` when an AI agent on the laptop asked for this call: the
+        /// phone then asks the owner before any confirm or harmful method.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
     },
     Result {
         id: u64,
@@ -244,8 +248,10 @@ mod tests {
         assert_eq!(ping, json!({"type": "ping", "id": 3}));
         let event = serde_json::to_value(Message::Event { topic: "clipboard".into(), data: json!({"text": "x"}) }).unwrap();
         assert_eq!(event, json!({"type": "event", "topic": "clipboard", "data": {"text": "x"}}));
-        let call = serde_json::to_value(Message::Call { id: 1, method: "icon".into(), params: json!({"package": "p"}) }).unwrap();
+        let call = serde_json::to_value(Message::Call { id: 1, method: "icon".into(), params: json!({"package": "p"}), origin: None }).unwrap();
         assert_eq!(call, json!({"type": "call", "id": 1, "method": "icon", "params": {"package": "p"}}));
+        let agent = Message::Call { id: 2, method: "hotspot".into(), params: json!({"on": true}), origin: Some("agent".into()) };
+        assert_eq!(serde_json::to_value(agent).unwrap()["origin"], "agent");
         assert_eq!(serde_json::to_value(Message::Sleeping).unwrap(), json!({"type": "sleeping"}));
     }
 

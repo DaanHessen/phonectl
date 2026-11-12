@@ -76,6 +76,19 @@ pub struct Notifier {
     dismiss_on_phone: bool,
     /// Ids we closed ourselves, so their Closed signal is not echoed back.
     closing: Mutex<Vec<u32>>,
+    /// Links shared from the phone: desktop id → URL, opened only on a click.
+    links: Mutex<HashMap<u32, String>>,
+}
+
+/// The URL if `text` is exactly one http(s) link of at most 2048 characters.
+pub fn web_link(text: &str) -> Option<&str> {
+    let t = text.trim();
+    if t.is_empty() || t.len() > 2048 || t.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let (scheme, rest) = t.split_once("://")?;
+    let scheme_ok = scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https");
+    (scheme_ok && !rest.is_empty()).then_some(t)
 }
 
 const REASON_DISMISSED: u32 = 2;
@@ -90,7 +103,13 @@ impl Notifier {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        Ok(Notifier { proxy, shown: Mutex::new(shown), dismiss_on_phone: config.dismiss_on_phone, closing: Mutex::new(Vec::new()) })
+        Ok(Notifier {
+            proxy,
+            shown: Mutex::new(shown),
+            dismiss_on_phone: config.dismiss_on_phone,
+            closing: Mutex::new(Vec::new()),
+            links: Mutex::new(HashMap::new()),
+        })
     }
 
     pub fn save(&self) {
@@ -102,6 +121,27 @@ impl Notifier {
 
     fn count(&self) -> usize {
         self.shown.lock().unwrap().seen.len()
+    }
+
+    /// A link shared from the phone: shown with an Open button, never opened by itself.
+    pub async fn show_link(&self, url: &str) {
+        let Some(url) = web_link(url) else {
+            tracing::info!("ignored a shared link that is not one http(s) URL");
+            return;
+        };
+        let mut hints: HashMap<&str, ZValue<'_>> = HashMap::new();
+        hints.insert("x-phonectl", ZValue::Bool(true));
+        let actions = ["default", "Open", "open", "Open"];
+        match self.proxy.notify("phonectl", 0, "phone", "Link from the phone", &escape(url), &actions, hints, -1).await {
+            Ok(id) => {
+                let mut links = self.links.lock().unwrap();
+                if links.len() > 50 {
+                    links.clear();
+                }
+                links.insert(id, url.to_owned());
+            }
+            Err(e) => tracing::warn!("cannot show the shared link: {e}"),
+        }
     }
 
     pub async fn show(&self, daemon: &Shared, n: Notification) {
@@ -223,6 +263,15 @@ pub async fn watch_signals(daemon: Shared) {
         tokio::select! {
             Some(signal) = invoked.next() => {
                 let Ok(args) = signal.args() else { continue };
+                let link = notifier.links.lock().unwrap().remove(&args.id);
+                if let Some(url) = link {
+                    // Opened in the owner's session by a click; the URL is an argument, never a shell string.
+                    match tokio::process::Command::new("xdg-open").arg(&url).spawn() {
+                        Ok(_) => tracing::info!("opened a link shared from the phone"),
+                        Err(e) => tracing::warn!("cannot open the shared link: {e}"),
+                    }
+                    continue;
+                }
                 let Some(key) = notifier.key_for(args.id) else { continue };
                 let (method, params) = if args.action_key == "default" {
                     ("notification_open", json!({"key": key}))
@@ -308,6 +357,15 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_single_web_links_are_opened() {
+        use super::web_link;
+        assert_eq!(web_link(" https://example.org/x?y=1 "), Some("https://example.org/x?y=1"));
+        for bad in ["javascript:alert(1)", "file:///etc/passwd", "https://a b", "--help", "https://", "ftp://x", "-https://x"] {
+            assert_eq!(web_link(bad), None, "{bad}");
+        }
+    }
+
     #[test]
     fn markup_is_escaped() {
         assert_eq!(super::escape("a<b> & c"), "a&lt;b&gt; &amp; c");

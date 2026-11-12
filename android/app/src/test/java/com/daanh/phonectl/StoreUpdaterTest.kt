@@ -25,19 +25,21 @@ class StoreUpdaterTest {
         val s = source("StoreUpdater.kt")
         val verify = s.indexOf("OwnApps.verify(context, file, pkg)")
         val install = s.indexOf("install(pkg, file)")
-        val borrow = s.indexOf("ShellClip.borrowInstallPermission()")
+        val borrow = s.indexOf("ShellClip.borrow(Borrow.INSTALL)")
         assertTrue(verify in 0 until install)
         assertTrue(borrow > 0)
-        assertTrue("only StoreUpdater borrows the install permission",
-            listOf("Updater.kt", "Link.kt", "Actions.kt", "MainActivity.kt", "App.kt").none { source(it).contains("borrowInstallPermission") })
+        val dir = File(listOf("src/main/java/com/daanh/phonectl", "app/src/main/java/com/daanh/phonectl").map(::File).first { it.isDirectory }.path)
+        val borrowers = dir.listFiles()!!.filter { it.readText().contains("borrow(Borrow.INSTALL)") }.map { it.name }
+        assertEquals("only StoreUpdater borrows the install permission", listOf("StoreUpdater.kt"), borrowers)
     }
 
     /** Every way an install ends gives the permission back. */
     @Test
     fun installPermissionIsReturned() {
-        assertTrue(source("Updater.kt").contains("ShellClip.returnInstallPermission(\"install done\")"))
-        assertTrue(source("StoreUpdater.kt").contains("ShellClip.returnInstallPermission(\"install failed\")"))
-        assertTrue(source("ShellWatcher.kt").contains("postDelayed(giveBack, 2 * 60_000L)"))
+        assertTrue(source("Updater.kt").contains("ShellClip.giveBack(Borrow.INSTALL, \"install done\")"))
+        assertTrue(source("StoreUpdater.kt").contains("ShellClip.giveBack(Borrow.INSTALL, \"install failed\")"))
+        assertTrue(source("ShellWatcher.kt").contains("INSTALL(INSTALL_PACKAGES, 2 * 60_000L)"))
+        assertTrue(source("ShellWatcher.kt").contains("main.postDelayed(limit, what.maxMs)"))
     }
 
     /** The laptop can ask for a check, never switch silent updates on or off. */

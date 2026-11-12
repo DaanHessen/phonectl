@@ -13,13 +13,29 @@ import java.util.Locale
 /**
  * The gate every laptop call passes before it reaches a feature: only the
  * methods in [RULES] exist, each has a rate limit, harmful ones need the phone
- * unlocked, and every call (allowed or refused) lands in "Recent laptop
- * actions" in the app. Unknown methods are refused here (fail closed).
+ * unlocked, confirm ones need the phone unlocked or a tap on a notification,
+ * and every call (allowed, refused or asked) lands in "Recent laptop actions"
+ * in the app. Unknown methods are refused here (fail closed).
  */
 object Actions {
-    enum class Risk { READ, NORMAL, HARMFUL }
+    enum class Risk {
+        READ,
+        NORMAL,
+        /** Refused while the phone is locked. */
+        HARMFUL,
+        /** Runs while unlocked; while locked, only after a tap on the phone ([Confirm]). */
+        CONFIRM,
+    }
 
-    class Rule(val label: String, val perMinute: Int, val risk: Risk)
+    /** [confirmIf] narrows [Risk.CONFIRM] to some parameters (hotspot on, not off). */
+    class Rule(val label: String, val perMinute: Int, val risk: Risk, val confirmIf: (JSONObject?) -> Boolean = { true })
+
+    sealed class Admission {
+        object Run : Admission()
+        class Refuse(val reason: String) : Admission()
+        /** Asked on the phone; the call runs when the owner taps (see [Confirm]). */
+        object Ask : Admission()
+    }
 
     val RULES: Map<String, Rule> = mapOf(
         "diag" to Rule("read the app log", 20, Risk.READ),
@@ -36,6 +52,9 @@ object Actions {
         "store_check" to Rule("check the phone store for updates", 6, Risk.NORMAL),
         "install_update" to Rule("install a phonectl update (own signature, newer only)", 3, Risk.NORMAL),
         "type_text" to Rule("type text", 30, Risk.HARMFUL),
+        "dnd" to Rule("switch Do Not Disturb", 10, Risk.NORMAL),
+        "open_link" to Rule("send a link (opens on a tap)", 10, Risk.NORMAL),
+        "hotspot" to Rule("switch the hotspot", 6, Risk.CONFIRM) { it?.optBoolean("on") == true },
     )
 
     private val limiter = RateLimiter { RULES[it]?.perMinute ?: 0 }
@@ -56,16 +75,41 @@ object Actions {
     }
 
     /** Null when [method] may run now, otherwise the reason it is refused (already recorded). */
-    fun admit(method: String, now: Long = System.currentTimeMillis()): String? {
+    fun admit(method: String, now: Long = System.currentTimeMillis()): String? =
+        when (val a = admit(method, null, now)) {
+            is Admission.Run -> null
+            is Admission.Refuse -> a.reason
+            is Admission.Ask -> "needs a tap on the phone"
+        }
+
+    /**
+     * [fromAgent]: the laptop daemon marked the call as coming from an AI
+     * agent; confirm and harmful methods then always need a tap on the phone.
+     */
+    fun admit(method: String, params: JSONObject?, now: Long = System.currentTimeMillis(), fromAgent: Boolean = false): Admission {
         val rule = RULES[method]
+        val locked = keyguard?.isDeviceLocked != false
         val refusal = when {
             rule == null -> "unknown method"
             !limiter.allow(method, now) -> "rate limit (${rule.perMinute}/min)"
-            rule.risk == Risk.HARMFUL && keyguard?.isDeviceLocked != false -> "phone is locked"
+            rule.risk == Risk.HARMFUL && locked -> "phone is locked"
             else -> null
         }
-        if (refusal != null) record(method, "refused: $refusal", now)
-        return refusal
+        val who = if (fromAgent) " (AI agent)" else ""
+        if (refusal != null) {
+            record(method, "refused$who: $refusal", now)
+            return Admission.Refuse(refusal)
+        }
+        val ask = when (rule!!.risk) {
+            Risk.CONFIRM -> fromAgent || (locked && rule.confirmIf(params))
+            Risk.HARMFUL -> fromAgent
+            else -> false
+        }
+        if (ask) {
+            record(method, "asked on the phone$who", now)
+            return Admission.Ask
+        }
+        return Admission.Run
     }
 
     fun record(method: String, outcome: String, now: Long = System.currentTimeMillis()) {

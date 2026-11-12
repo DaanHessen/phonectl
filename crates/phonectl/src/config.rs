@@ -4,6 +4,7 @@
 //! name = "omarchy"          # how the phone shows this laptop
 //! port = 47201              # TCP port on the Tailscale address
 //! dismiss_on_phone = true   # dismissing a mirrored notification here clears it on the phone
+//! dnd_sync = true           # Do Not Disturb follows between laptop (mako mode) and phone
 //! ```
 
 use serde::Deserialize;
@@ -14,6 +15,8 @@ pub struct Config {
     pub name: String,
     pub port: u16,
     pub dismiss_on_phone: bool,
+    /// Mirror Do Not Disturb between the laptop (mako mode) and the phone.
+    pub dnd_sync: bool,
 }
 
 impl Default for Config {
@@ -21,7 +24,7 @@ impl Default for Config {
         let name = std::fs::read_to_string("/proc/sys/kernel/hostname")
             .map(|h| h.trim().to_string())
             .unwrap_or_else(|_| "laptop".into());
-        Config { name, port: phone::link::TCP_PORT, dismiss_on_phone: true }
+        Config { name, port: phone::link::TCP_PORT, dismiss_on_phone: true, dnd_sync: true }
     }
 }
 

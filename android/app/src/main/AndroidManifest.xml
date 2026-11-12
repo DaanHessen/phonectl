@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- "Touch to stop" screen over the lock screen while `phonectl ring` rings. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
@@ -103,6 +105,17 @@
         </service>
 
         <receiver android:name=".UpdateReceiver" android:exported="false" />
+        <receiver android:name=".ConfirmReceiver" android:exported="false" />
+        <receiver android:name=".RingStopReceiver" android:exported="false" />
+
+        <activity
+            android:name=".RingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="" />
 
         <receiver
             android:name=".KeyboardBridge"

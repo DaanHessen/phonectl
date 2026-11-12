@@ -262,6 +262,8 @@ object StatusMonitor : Link.Feature {
         .put("media", PhoneControls.media ?: JSONObject.NULL)
         .put("ringer", PhoneControls.ringerMode())
         .put("ringing", PhoneControls.ringing)
+        .put("dnd", try { Dnd.on() } catch (_: Exception) { JSONObject.NULL })
+        .put("hotspot", Hotspot.status())
         .put("permissions", JSONObject()
             .put("phone_state", granted(Manifest.permission.READ_PHONE_STATE))
             .put("bluetooth", granted(Manifest.permission.BLUETOOTH_CONNECT))

@@ -11,6 +11,7 @@
 
 pub mod bt;
 pub mod clipboard;
+pub mod dnd;
 pub mod ipc;
 pub mod media;
 pub mod net;
@@ -77,6 +78,7 @@ pub struct Daemon {
     pub notifier: notify::Notifier,
     pub media: media::CallMedia,
     pub watcher: watcher::Watcher,
+    pub dnd: dnd::DndSync,
 }
 
 pub type Shared = Arc<Daemon>;
@@ -176,6 +178,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         clipboard: clipboard::Clipboard::new(),
         media: media::CallMedia::new().await?,
         watcher: watcher::Watcher::default(),
+        dnd: dnd::DndSync::default(),
         notifier,
         sessions: session::Registry::default(),
         state: Mutex::new(State { phone: load_phone(), ..State::default() }),
@@ -193,6 +196,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     tokio::spawn(clipboard::watch(daemon.clone()));
     tokio::spawn(notify::watch_signals(daemon.clone()));
     tokio::spawn(sleep::watch(daemon.clone()));
+    tokio::spawn(dnd::watch(daemon.clone()));
     tokio::spawn(net::keep_poking(daemon.clone()));
 
     // The phone may be backing off after our restart: tell it we are here.

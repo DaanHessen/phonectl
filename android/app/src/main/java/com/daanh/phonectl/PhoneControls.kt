@@ -20,7 +20,8 @@ import org.json.JSONObject
  * Things the laptop's phone menu can do and show:
  *  - now playing on the phone, with play/pause/next/previous
  *  - ringer mode (normal / vibrate / silent)
- *  - "find my phone": ring at alarm volume until stopped (or 30 s)
+ *  - "find my phone": ring at full alarm volume, even on silent, until a
+ *    touch on the phone, `phonectl ring --stop` or 60 s
  *
  * Media sessions are readable because we are an enabled notification
  * listener; everything is callback-driven and only changes are sent (as part
@@ -38,7 +39,7 @@ object PhoneControls : Link.Feature {
     private var controller: MediaController? = null
     private var mediaStarted = false
 
-    private val stopRing = Runnable { ring(false) }
+    private val ringTimeout = Runnable { ring(false) }
 
     fun init(ctx: Context) {
         context = ctx.applicationContext
@@ -107,27 +108,83 @@ object PhoneControls : Link.Feature {
         pkg
     }
 
+    private var savedAlarmVolume: Int? = null
+
+    /** Stops a ring from the phone itself (touch or key on [RingActivity]). */
+    fun stopRing(reason: String) {
+        handler.post {
+            if (!ringing) return@post
+            ring(false)
+            Actions.note("ring", "ring the phone", "stopped: $reason")
+        }
+    }
+
     private fun ring(on: Boolean) {
-        handler.removeCallbacks(stopRing)
+        handler.removeCallbacks(ringTimeout)
         ringtone?.stop()
         ringtone = null
+        val am = context.getSystemService(AudioManager::class.java)
+        savedAlarmVolume?.let { try { am.setStreamVolume(AudioManager.STREAM_ALARM, it, 0) } catch (_: Exception) {} }
+        savedAlarmVolume = null
+        val wasRinging = ringing
         ringing = false
         if (on) {
             val uri = RingtoneManager.getActualDefaultRingtoneUri(context, RingtoneManager.TYPE_RINGTONE)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             val tone = RingtoneManager.getRingtone(context, uri) ?: throw IllegalStateException("no ringtone")
-            // Alarm usage plays even in vibrate/silent mode.
+            // Alarm usage plays even in vibrate/silent mode; full alarm volume
+            // for the ring, put back afterwards.
             tone.audioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
+            try {
+                savedAlarmVolume = am.getStreamVolume(AudioManager.STREAM_ALARM)
+                am.setStreamVolume(AudioManager.STREAM_ALARM, am.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)
+            } catch (_: Exception) {
+                savedAlarmVolume = null
+            }
             tone.isLooping = true
             tone.play()
             ringtone = tone
             ringing = true
-            handler.postDelayed(stopRing, 30_000)
+            handler.postDelayed(ringTimeout, 60_000)
+            showStopScreen()
+        } else if (wasRinging) {
+            context.getSystemService(android.app.NotificationManager::class.java).cancel(RING_NOTIFICATION)
         }
         StatusMonitor.refresh()
+    }
+
+    private const val RING_CHANNEL = "ring"
+    private const val RING_NOTIFICATION = 8
+
+    /** A full-screen "touch to stop" screen; the notification's Stop is the fallback. */
+    private fun showStopScreen() {
+        val nm = context.getSystemService(android.app.NotificationManager::class.java)
+        nm.createNotificationChannel(android.app.NotificationChannel(RING_CHANNEL, "Find my phone", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+            setSound(null, null)
+        })
+        val screen = android.content.Intent(context, RingActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+        val full = android.app.PendingIntent.getActivity(context, 3, screen, android.app.PendingIntent.FLAG_IMMUTABLE)
+        val stop = android.app.PendingIntent.getBroadcast(
+            context, 4,
+            android.content.Intent(context, RingStopReceiver::class.java),
+            android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = android.app.Notification.Builder(context, RING_CHANNEL)
+            .setSmallIcon(R.drawable.ic_phonectl)
+            .setContentTitle("Ringing from the laptop")
+            .setContentText("Touch to stop")
+            .setCategory(android.app.Notification.CATEGORY_ALARM)
+            .setVisibility(android.app.Notification.VISIBILITY_PUBLIC)
+            .setFullScreenIntent(full, true)
+            .setContentIntent(full)
+            .setDeleteIntent(stop)
+            .addAction(android.app.Notification.Action.Builder(null, "Stop", stop).build())
+            .build()
+        try { nm.notify(RING_NOTIFICATION, notification) } catch (_: SecurityException) {}
     }
 
     override fun onCall(method: String, params: JSONObject?): Any? {
@@ -164,4 +221,9 @@ object PhoneControls : Link.Feature {
         }
         return Unit
     }
+}
+
+/** "Stop" on the ring notification (or swiping it away). Not exported. */
+class RingStopReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) = PhoneControls.stopRing("stopped on the phone")
 }

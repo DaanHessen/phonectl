@@ -82,15 +82,28 @@ class ExportedComponentsTest {
         val source = candidates.map(::File).first { it.exists() }.readText()
         val calls = Regex("""adoptShellPermissionIdentity\(([^)]*)\)""").findAll(source).map { it.groupValues[1] }.toList()
         assertTrue(calls.isNotEmpty())
-        val allowed = setOf("READ_CLIPBOARD_IN_BACKGROUND", "INSTALL_PACKAGES")
+        // One shell permission per capability; adding one means updating docs/security.md and this list.
+        val allowed = setOf("READ_CLIPBOARD_IN_BACKGROUND", "INSTALL_PACKAGES", "TETHER_PRIVILEGED", "INJECT_EVENTS")
         for (call in calls) {
             val args = call.split(",").map { it.trim() }
             // Never the no-argument form, which adopts every shell permission.
             assertTrue("adopt call without arguments", args.none { it.isEmpty() })
-            assertTrue("unexpected permission in adopt($call)", args.all { it in allowed })
+            assertTrue("unexpected permission in adopt($call)", args.all { it in allowed || it == "*permissions" })
+        }
+        // The spread array is the clipboard permission plus what is borrowed right now, nothing else.
+        assertTrue(source.contains("val permissions = arrayOf(READ_CLIPBOARD_IN_BACKGROUND) + borrowed.keys.map { it.permission }"))
+        val borrows = Regex("""^\s+([A-Z]+)\((\w+), (\d+)(?: \* (\d+)_000L|_000L)\),""", RegexOption.MULTILINE).findAll(source).toList()
+        assertEquals(setOf("INSTALL_PACKAGES", "TETHER_PRIVILEGED", "INJECT_EVENTS"), borrows.map { it.groupValues[2] }.toSet())
+        for (b in borrows) {
+            val ms = b.groupValues[3].toLong() * (b.groupValues[4].ifEmpty { "1" }.toLong()) * 1000
+            assertTrue("${b.groupValues[1]} may be held at most two minutes", ms in 1..120_000)
         }
         val constants = Regex("""const val (\w+) = "android\.permission\.(\w+)"""").findAll(source).map { it.groupValues[1] }.toSet()
         assertEquals(allowed, constants)
+        // Typing injects key events only: no touches, no trackball, no raw input injection.
+        assertTrue("only key events may be injected",
+            Regex("""sendPointerSync|sendTrackballEventSync|MotionEvent|injectInputEvent|sendCharacterSync""").find(source) == null)
+        assertEquals("INJECT is borrowed in one place", 1, Regex("""borrow\(Borrow\.INJECT\)""").findAll(source).count())
         assertTrue("UiAutomation must not be used for anything else",
             Regex("""\.(injectInputEvent|takeScreenshot|getWindows|executeShellCommand|setRotation|grantRuntimePermission|dropShellPermissionIdentity)""").find(source) == null)
         assertTrue("UiAutomation must stay private to ShellWatcher.kt",

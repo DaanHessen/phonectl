@@ -201,7 +201,7 @@ object StoreUpdater : Link.Feature {
     }
 
     private fun install(pkg: String, file: File) {
-        if (!ShellClip.borrowInstallPermission()) return
+        if (!ShellClip.borrow(Borrow.INSTALL)) return
         try {
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
@@ -222,7 +222,7 @@ object StoreUpdater : Link.Feature {
             }
             Diag.log("store: installing $pkg")
         } catch (e: Exception) {
-            ShellClip.returnInstallPermission("install failed")
+            ShellClip.giveBack(Borrow.INSTALL, "install failed")
             Diag.log("store: install of $pkg failed: ${e.javaClass.simpleName}")
         } finally {
             file.delete()

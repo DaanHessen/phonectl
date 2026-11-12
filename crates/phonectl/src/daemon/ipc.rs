@@ -14,7 +14,44 @@ use tokio::net::{UnixListener, UnixStream};
 use super::Shared;
 
 /// Phone methods local clients may invoke through the daemon.
-const PHONE_CALLS: &[&str] = &["ring", "ringer", "media_action", "test_notification", "diag", "type_text", "store_check"];
+const PHONE_CALLS: &[&str] = &[
+    "ring", "ringer", "media_action", "test_notification", "diag", "type_text", "store_check", "dnd", "hotspot", "open_link",
+];
+
+/// Params a local client may pass, rebuilt from scratch so nothing else
+/// reaches the phone. `dnd` and `hotspot` take exactly `{"on": bool}`.
+fn clean_params(method: &str, params: &Value) -> Result<Value, &'static str> {
+    match method {
+        "dnd" | "hotspot" => match params.get("on").and_then(Value::as_bool) {
+            Some(on) if params.as_object().is_some_and(|o| o.len() == 1) => Ok(json!({"on": on})),
+            _ => Err("expects {\"on\": true|false}"),
+        },
+        "open_link" => match params.get("url").and_then(Value::as_str).and_then(super::notify::web_link) {
+            Some(url) if params.as_object().is_some_and(|o| o.len() == 1) => Ok(json!({"url": url})),
+            _ => Err("expects one http or https link"),
+        },
+        _ => Ok(params.clone()),
+    }
+}
+
+/// AI agents run in the `ai.slice` cgroup (the airlock's Room B and its
+/// sub-agents). Their calls are marked so the phone asks the owner first.
+/// A caller whose cgroup cannot be read counts as an agent (fail closed).
+fn caller_is_agent(cgroup: Option<&str>) -> bool {
+    match cgroup {
+        Some(text) => text.lines().any(|l| l.contains("/ai.slice/") || l.ends_with("/ai.slice")),
+        None => true,
+    }
+}
+
+fn peer_origin(stream: &UnixStream) -> Option<&'static str> {
+    let cgroup = stream
+        .peer_cred()
+        .ok()
+        .and_then(|c| c.pid())
+        .and_then(|pid| std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok());
+    caller_is_agent(cgroup.as_deref()).then_some("agent")
+}
 
 pub struct Guard(std::path::PathBuf);
 
@@ -48,6 +85,7 @@ pub async fn serve(daemon: Shared) -> anyhow::Result<Guard> {
 }
 
 async fn client(daemon: Shared, stream: UnixStream) {
+    let origin = peer_origin(&stream);
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -68,12 +106,19 @@ async fn client(daemon: Shared, stream: UnixStream) {
                 if !PHONE_CALLS.contains(&phone_method) {
                     json!({"ok": false, "error": "not allowed"})
                 } else {
-                    match daemon.sessions.call(phone_method, request["params"]["params"].clone()).await {
-                        Ok(data) => json!({"ok": true, "data": data}),
+                    match clean_params(phone_method, &request["params"]["params"]) {
                         Err(e) => json!({"ok": false, "error": e}),
+                        Ok(params) => {
+                            let limit = std::time::Duration::from_secs(if phone_method == "hotspot" { 30 } else { 10 });
+                            match daemon.sessions.call_as(phone_method, params, origin, limit).await {
+                                Ok(data) => json!({"ok": true, "data": data}),
+                                Err(e) => json!({"ok": false, "error": e}),
+                            }
+                        }
                     }
                 }
             }
+            "update" if origin.is_some() => json!({"ok": false, "error": "agents cannot push app updates"}),
             "update" => match request["params"]["path"].as_str().map(std::fs::read) {
                 Some(Ok(bytes)) => {
                     use base64::Engine;
@@ -123,7 +168,24 @@ async fn subscribe(daemon: &Shared, write: &mut tokio::net::unix::OwnedWriteHalf
 
 #[cfg(test)]
 mod tests {
-    use super::PHONE_CALLS;
+    use super::{PHONE_CALLS, caller_is_agent, clean_params};
+    use serde_json::json;
+
+    #[test]
+    fn agents_are_recognised_by_cgroup_and_unknown_callers_count_as_agents() {
+        assert!(caller_is_agent(Some("0::/user.slice/user-1000.slice/user@1000.service/ai.slice/run-p3953-i49312.scope\n")));
+        assert!(caller_is_agent(None));
+        assert!(!caller_is_agent(Some("0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot.scope\n")));
+    }
+
+    #[test]
+    fn switch_params_are_a_single_bool() {
+        assert_eq!(clean_params("hotspot", &json!({"on": true})).unwrap(), json!({"on": true}));
+        assert_eq!(clean_params("dnd", &json!({"on": false})).unwrap(), json!({"on": false}));
+        assert!(clean_params("hotspot", &json!({"on": "true"})).is_err());
+        assert!(clean_params("hotspot", &json!({"on": true, "ssid": "x"})).is_err());
+        assert!(clean_params("dnd", &json!(null)).is_err());
+    }
 
     #[test]
     fn cli_cannot_reach_debugging_or_install_calls() {

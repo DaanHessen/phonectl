@@ -70,11 +70,16 @@ impl Registry {
     }
 
     pub async fn call_with_timeout(&self, method: &str, params: Value, limit: Duration) -> Result<Value, String> {
+        self.call_as(method, params, None, limit).await
+    }
+
+    /// A call on behalf of a local client; `origin` is `Some("agent")` for AI agents.
+    pub async fn call_as(&self, method: &str, params: Value, origin: Option<&str>, limit: Duration) -> Result<Value, String> {
         let handle = self.current().ok_or("phone not connected")?;
         let id = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
         handle.pending.lock().unwrap().insert(id, tx);
-        let message = Message::Call { id, method: method.into(), params };
+        let message = Message::Call { id, method: method.into(), params, origin: origin.map(str::to_owned) };
         if handle.tx.send(Outgoing::Message(message)).await.is_err() {
             return Err("phone disconnected".into());
         }
@@ -239,6 +244,7 @@ where
                 state.error = Some(reason.clone());
             }
         }
+        daemon.dnd.on_disconnected();
         daemon.save_phone();
         daemon.publish();
         daemon.event("disconnected", json!({"reason": reason}));
@@ -317,6 +323,7 @@ async fn dispatch_event(daemon: &Shared, topic: &str, data: Value) {
             }
             daemon.publish();
             daemon.watcher.on_status(daemon, &data);
+            daemon.dnd.on_phone_status(daemon, &data);
             if let Some(call) = call {
                 daemon.media.call_state(&call).await;
             }
@@ -362,6 +369,24 @@ async fn dispatch_event(daemon: &Shared, topic: &str, data: Value) {
             daemon.event("update", json!({"status": status}));
         }
         "crash" => save_crash_report(&data),
+        "link" => {
+            if let Some(url) = data.get("url").and_then(Value::as_str) {
+                daemon.notifier.show_link(url).await;
+            }
+        }
+        "action_result" => {
+            // A call the owner allowed or denied on the phone ([Confirm] in the app).
+            let method = data.get("method").and_then(Value::as_str).unwrap_or("");
+            if method.len() <= 40 && method.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                let error: Option<String> =
+                    data.get("error").and_then(Value::as_str).map(|e| e.chars().filter(|c| !c.is_control()).take(120).collect());
+                match &error {
+                    Some(e) => tracing::info!("phone: {method} not done: {e}"),
+                    None => tracing::info!("phone: {method} done after a tap on the phone"),
+                }
+                daemon.event("action_result", json!({"method": method, "error": error}));
+            }
+        }
         "store_update" => {
             let package = data.get("package").and_then(Value::as_str).unwrap_or("");
             let status = data.get("status").and_then(Value::as_str).unwrap_or("");
