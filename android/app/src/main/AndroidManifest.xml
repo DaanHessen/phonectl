@@ -40,6 +40,7 @@
         android:label="phonectl"
         android:icon="@drawable/ic_phonectl"
         android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.DeviceDefault.DayNight">
 
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">

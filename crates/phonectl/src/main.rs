@@ -65,6 +65,8 @@ enum Command {
     },
     /// Print the phone app's recent log (states and package names only).
     Diag,
+    /// Ask the phone to update the owner's own apps from the phone store now.
+    UpdateApps,
     /// Post a test notification on the phone (to check mirroring).
     TestNotification,
     /// Install a new phone app build over the link (no ADB needed).
@@ -221,6 +223,22 @@ async fn link_command(command: Command) -> anyhow::Result<u8> {
             } else {
                 anyhow::bail!("{}", reply["error"].as_str().unwrap_or("failed"))
             }
+        }
+        Command::UpdateApps => {
+            let stream = connect_daemon().await?;
+            let (read, mut write) = stream.into_split();
+            write.write_all(b"{\"method\":\"call\",\"params\":{\"method\":\"store_check\"}}\n").await?;
+            let line = BufReader::new(read).lines().next_line().await?.unwrap_or_default();
+            let reply: serde_json::Value = serde_json::from_str(&line)?;
+            if reply["ok"] != true {
+                anyhow::bail!("{}", reply["error"].as_str().unwrap_or("failed"));
+            }
+            if reply["data"]["started"] == true {
+                println!("the phone is checking the store; `phonectl diag` shows what it installed");
+            } else {
+                println!("the phone checked less than 10 minutes ago; try again later");
+            }
+            Ok(exit::OK)
         }
         Command::Diag => {
             let stream = connect_daemon().await?;

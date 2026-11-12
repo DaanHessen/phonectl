@@ -29,6 +29,14 @@ object Updater : Link.Feature {
     override fun onCall(method: String, params: JSONObject?): Any? {
         if (method != "install_update") return null
         val apk = Base64.decode(params?.optString("apk") ?: throw IllegalArgumentException("apk"), Base64.DEFAULT)
+        // Only a newer phonectl signed with the pinned certificate.
+        val check = java.io.File(context.cacheDir, "update-check.apk")
+        try {
+            check.writeBytes(apk)
+            OwnApps.verify(context, check, context.packageName)
+        } finally {
+            check.delete()
+        }
         val installer = context.packageManager.packageInstaller
         val sessionParams = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -50,8 +58,30 @@ object Updater : Link.Feature {
 }
 
 class UpdateReceiver : BroadcastReceiver() {
+    companion object {
+        const val EXTRA_STORE = "store_package"
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val store = intent.getStringExtra(EXTRA_STORE)
+        if (store != null) {
+            // Silent store install: never show a prompt (Obtainium still offers it).
+            ShellClip.returnInstallPermission("install done")
+            val result = when (status) {
+                PackageInstaller.STATUS_SUCCESS -> "installed"
+                PackageInstaller.STATUS_PENDING_USER_ACTION -> "would need a tap; left to Obtainium"
+                else -> "failed ($status)"
+            }
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                val id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+                if (id >= 0) try { context.packageManager.packageInstaller.abandonSession(id) } catch (_: Exception) {}
+            }
+            Diag.log("store: $store $result")
+            Actions.note("store_install", "update $store from the phone store", result)
+            Link.event("store_update", JSONObject().put("package", store).put("status", result))
+            return
+        }
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             @Suppress("DEPRECATION")
             val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return

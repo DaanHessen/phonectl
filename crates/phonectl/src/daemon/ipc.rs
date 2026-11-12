@@ -14,7 +14,7 @@ use tokio::net::{UnixListener, UnixStream};
 use super::Shared;
 
 /// Phone methods local clients may invoke through the daemon.
-const PHONE_CALLS: &[&str] = &["ring", "ringer", "media_action", "test_notification", "diag", "type_text"];
+const PHONE_CALLS: &[&str] = &["ring", "ringer", "media_action", "test_notification", "diag", "type_text", "store_check"];
 
 pub struct Guard(std::path::PathBuf);
 

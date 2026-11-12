@@ -173,6 +173,7 @@ phonectl test-notification    post a test notification on the phone
 phonectl events               live link events
 phonectl diag                 the phone app's own log, no ADB needed
 phonectl update               install a new app build over the link
+phonectl update-apps          the phone updates the owner's own apps from the phone store now
 phonectl type TEXT [--key K]  type on the phone (phonectl Keyboard); `-` = stdin
 phonectl setup-clipboard      one-time setup for automatic phone → laptop clipboard
 ```
@@ -193,8 +194,11 @@ the phone before it suspends so the phone stays quiet meanwhile.
 
 **Security.** Every capability phonectl holds, what it could do, how it is
 limited, the remaining risks and how to turn each feature off are in
-[docs/security.md](docs/security.md). In short: one borrowed shell permission
-(background clipboard reads), wireless debugging switched on only for seconds
+[docs/security.md](docs/security.md). In short: borrowed shell permissions
+held only while needed (background clipboard reads; package installs for the
+seconds of a silent update of the owner's own signature-pinned apps), every
+laptop command whitelisted, rate-limited and listed under "Recent laptop
+actions" in the app, wireless debugging switched on only for seconds
 while the laptop restarts the watcher, a mutual-HMAC link, no exported entry
 points that let other apps drive phonectl, and pairing changes only after a
 confirm on the phone.
@@ -213,6 +217,9 @@ _Design notes and research are in [docs](docs/)._
 - [x] Waybar module and phone panel
 - [x] Updates over the link
 - [x] Automatic phone → laptop clipboard with any keyboard (shell-identity watcher)
+- [x] Silent updates of the owner's own apps from the phone store
+- [x] Command gate: whitelist, rate limits, recent actions list on the phone
+- [ ] Do Not Disturb sync and hotspot toggle
 - [ ] Bluetooth fallback tested end to end
 - [ ] Reply to messages from the laptop
 - [ ] Re-check everything on Android 17

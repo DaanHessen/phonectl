@@ -37,15 +37,11 @@ class ShellWatcher : Instrumentation() {
         start()
     }
 
-    private companion object {
-        // Hidden in the SDK (signature permission); the shell holds it.
-        const val READ_CLIPBOARD_IN_BACKGROUND = "android.permission.READ_CLIPBOARD_IN_BACKGROUND"
-    }
-
     override fun onStart() {
         val error = try {
-            getUiAutomation(UiAutomation.FLAG_DONT_USE_ACCESSIBILITY)
-                .adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND)
+            val automation = getUiAutomation(UiAutomation.FLAG_DONT_USE_ACCESSIBILITY)
+            automation.adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND)
+            ShellClip.attach(automation)
             null
         } catch (e: Throwable) {
             e.javaClass.simpleName + (e.message?.let { ": ${it.take(80)}" } ?: "")
@@ -56,8 +52,47 @@ class ShellWatcher : Instrumentation() {
     }
 }
 
-/** State of the shell clipboard watcher, shared by the app and the instrumentation. */
+// Hidden in the SDK (signature permissions); the shell holds them.
+private const val READ_CLIPBOARD_IN_BACKGROUND = "android.permission.READ_CLIPBOARD_IN_BACKGROUND"
+private const val INSTALL_PACKAGES = "android.permission.INSTALL_PACKAGES"
+
+/**
+ * State of the shell clipboard watcher, shared by the app and the
+ * instrumentation. Every borrowed shell permission is listed here and nowhere
+ * else (docs/security.md); the UiAutomation object never leaves this file.
+ */
 object ShellClip {
+    private var automation: UiAutomation? = null
+    private val lock = Object()
+
+    internal fun attach(ui: UiAutomation) = synchronized(lock) { automation = ui }
+
+    private val main = Handler(Looper.getMainLooper())
+    private val giveBack = Runnable { returnInstallPermission("time limit") }
+
+    /**
+     * Borrows INSTALL_PACKAGES as well, until [returnInstallPermission] (the
+     * install finished) or two minutes at most. Android checks it while the
+     * install runs, after `commit()` returns, so it cannot be scoped to one
+     * call. Only [StoreUpdater] calls this, after checking the APK's package,
+     * version and signing certificate. False when the watcher is not running.
+     */
+    fun borrowInstallPermission(): Boolean = synchronized(lock) {
+        val ui = automation ?: return false
+        ui.adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND, INSTALL_PACKAGES)
+        main.removeCallbacks(giveBack)
+        main.postDelayed(giveBack, 2 * 60_000L)
+        Diag.log("install permission borrowed")
+        true
+    }
+
+    fun returnInstallPermission(reason: String): Unit = synchronized(lock) {
+        main.removeCallbacks(giveBack)
+        val ui = automation ?: return@synchronized
+        ui.adoptShellPermissionIdentity(READ_CLIPBOARD_IN_BACKGROUND)
+        Diag.log("install permission returned ($reason)")
+    }
+
     /** This process was started by `am instrument` (set before App.onCreate). */
     @Volatile var instrumented = false
     /** Shell permission borrowed: background clipboard reads work. */

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adb"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "phone"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "adb",
  "hmac",
@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "phonectl"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "adb",
  "anyhow",

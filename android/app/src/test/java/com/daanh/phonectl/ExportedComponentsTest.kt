@@ -77,12 +77,24 @@ class ExportedComponentsTest {
     }
 
     @Test
-    fun watcherAdoptsOnlyTheClipboardPermission() {
+    fun watcherAdoptsOnlyListedPermissions() {
         val candidates = listOf("src/main/java/com/daanh/phonectl/ShellWatcher.kt", "app/src/main/java/com/daanh/phonectl/ShellWatcher.kt")
         val source = candidates.map(::File).first { it.exists() }.readText()
-        val calls = Regex("""adoptShellPermissionIdentity\(([^)]*)\)""").findAll(source).map { it.groupValues[1].trim() }.toList()
-        assertEquals(listOf("READ_CLIPBOARD_IN_BACKGROUND"), calls)
+        val calls = Regex("""adoptShellPermissionIdentity\(([^)]*)\)""").findAll(source).map { it.groupValues[1] }.toList()
+        assertTrue(calls.isNotEmpty())
+        val allowed = setOf("READ_CLIPBOARD_IN_BACKGROUND", "INSTALL_PACKAGES")
+        for (call in calls) {
+            val args = call.split(",").map { it.trim() }
+            // Never the no-argument form, which adopts every shell permission.
+            assertTrue("adopt call without arguments", args.none { it.isEmpty() })
+            assertTrue("unexpected permission in adopt($call)", args.all { it in allowed })
+        }
+        val constants = Regex("""const val (\w+) = "android\.permission\.(\w+)"""").findAll(source).map { it.groupValues[1] }.toSet()
+        assertEquals(allowed, constants)
         assertTrue("UiAutomation must not be used for anything else",
-            Regex("""\.(injectInputEvent|takeScreenshot|getWindows|executeShellCommand|setRotation|grantRuntimePermission)""").find(source) == null)
+            Regex("""\.(injectInputEvent|takeScreenshot|getWindows|executeShellCommand|setRotation|grantRuntimePermission|dropShellPermissionIdentity)""").find(source) == null)
+        assertTrue("UiAutomation must stay private to ShellWatcher.kt",
+            candidates.map(::File).first { it.exists() }.parentFile.listFiles()!!
+                .filter { it.name != "ShellWatcher.kt" }.none { it.readText().contains("UiAutomation") })
     }
 }

@@ -30,6 +30,7 @@ class MainActivity : Activity() {
     private lateinit var checks: LinearLayout
     private lateinit var pairInput: EditText
     private lateinit var pairHelp: TextView
+    private lateinit var recent: TextView
     private val refresh: () -> Unit = { runOnUiThread { render() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,6 +88,20 @@ class MainActivity : Activity() {
             text = "Paste and pair"
             setOnClickListener { if (!pairFromClipboard()) toast("The clipboard holds no phonectl pairing string") }
         })
+
+        root.addView(heading("Updates"))
+        root.addView(android.widget.Switch(this).apply {
+            text = "Install updates of my own apps without asking (phone store, pinned signing keys, newer versions only)"
+            isChecked = StoreUpdater.enabled
+            setOnCheckedChangeListener { _, on -> StoreUpdater.enabled = on }
+        })
+
+        root.addView(heading("Recent laptop actions"))
+        recent = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextIsSelectable(true)
+        }
+        root.addView(recent)
 
         setContentView(ScrollView(this).apply { addView(root) })
         handlePairIntent(intent)
@@ -155,6 +170,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         Link.addListener(refresh)
+        Actions.onChange = refresh
         StatusMonitor.registerTelephony()
         ClipSync.startWatcher()
         render()
@@ -163,6 +179,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         Link.removeListener(refresh)
+        Actions.onChange = null
     }
 
     private fun pair(text: String) {
@@ -186,6 +203,8 @@ class MainActivity : Activity() {
             Link.State.DISCONNECTED -> "Not connected" + (Link.lastError?.let { "\n$it" } ?: "")
         }
 
+        val actions = Actions.recent().asReversed().take(30)
+        recent.text = if (actions.isEmpty()) "None yet. Every command the laptop sends is listed here." else actions.joinToString("\n") { it.line() }
         pairHelp.visibility = if (Link.state == Link.State.UNPAIRED) android.view.View.VISIBLE else android.view.View.GONE
         checks.removeAllViews()
         val power = getSystemService(PowerManager::class.java)

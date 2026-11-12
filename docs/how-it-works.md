@@ -110,3 +110,38 @@ adb shell am instrument com.daanh.phonectl/.ShellWatcher
 adb shell dumpsys activity processes | grep -A1 ShellWatcher
 adb shell settings put global adb_wifi_enabled 0   # watcher keeps running
 ```
+
+# Silent updates of the owner's own apps
+
+The same shell identity also holds `INSTALL_PACKAGES`, which lets an installer
+skip Android's "Do you want to update this app?" prompt. phonectl borrows it
+only for the seconds of one install:
+
+1. Once an hour when the link connects, and on `phonectl update-apps`, the app
+   reads the phone store's listing for each package in `OwnApps.PINS`
+   (`http://<pi>:8766/apps/<package>/`, over Tailscale) and picks the highest
+   version code from the file names (`<package>-<version>-<code>.apk`).
+2. If that is newer than the installed version and the watcher is running, it
+   downloads the APK into its private cache and checks it with
+   `getPackageArchiveInfo`: listed package, already installed, higher version
+   code, every signer equal to the pinned certificate SHA-256.
+3. Only then `ShellClip.borrowInstallPermission()` adopts
+   `READ_CLIPBOARD_IN_BACKGROUND` + `INSTALL_PACKAGES`, and a `PackageInstaller`
+   session with `USER_ACTION_NOT_REQUIRED` is committed.
+4. When Android reports the result (`UpdateReceiver`, not exported), the
+   identity goes back to the clipboard permission alone; a timer does the same
+   after two minutes if no result came. The result is listed under "Recent
+   laptop actions" and sent to the laptop as a `store_update` event.
+
+phonectl is updated last, because installing it ends phonectl's own process
+(and with it the watcher, which the laptop then restarts as after any update).
+Without the watcher nothing is installed and Obtainium's normal prompt stays
+the way to update. The switch "Install updates of my own apps without asking"
+in the app turns the feature off.
+
+# The command gate
+
+Every call from the laptop goes through `Actions.admit` in `Link` before any
+feature sees it: the method must be in `Actions.RULES`, under its per-minute
+limit, and harmful methods need the phone unlocked. The app shows the last
+calls (and refusals) under "Recent laptop actions".

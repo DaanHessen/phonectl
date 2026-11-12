@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain HTTP only to the owner's phone store on the Pi, over Tailscale
+     (WireGuard-encrypted); APKs are also checked against a pinned signing
+     certificate before install (StoreUpdater). Everything else: HTTPS only. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">100.66.214.122</domain>
+    </domain-config>
+</network-security-config>

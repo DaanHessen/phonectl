@@ -362,6 +362,15 @@ async fn dispatch_event(daemon: &Shared, topic: &str, data: Value) {
             daemon.event("update", json!({"status": status}));
         }
         "crash" => save_crash_report(&data),
+        "store_update" => {
+            let package = data.get("package").and_then(Value::as_str).unwrap_or("");
+            let status = data.get("status").and_then(Value::as_str).unwrap_or("");
+            if package.len() <= 100 && package.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_') {
+                let status: String = status.chars().filter(|c| !c.is_control()).take(80).collect();
+                tracing::info!("phone store update: {package} {status}");
+                daemon.event("store_update", json!({"package": package, "status": status}));
+            }
+        }
         other => tracing::debug!("ignoring event {other}"),
     }
 }

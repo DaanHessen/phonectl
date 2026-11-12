@@ -340,6 +340,10 @@ object Link {
                 val id = message.optLong("id")
                 val method = message.optString("method")
                 val params = message.optJSONObject("params")
+                Actions.admit(method)?.let { refusal ->
+                    from.send(Protocol.result(id, null, "refused: $refusal"))
+                    return
+                }
                 var reply: JSONObject = Protocol.result(id, null, "unknown method $method")
                 for (f in features) {
                     try {
@@ -348,6 +352,7 @@ object Link {
                             // Slow calls answer later, off the link thread.
                             data.whenComplete { value, error ->
                                 val cause = (error as? java.util.concurrent.CompletionException)?.cause ?: error
+                                Actions.record(method, if (cause != null) "failed: ${cause.message ?: cause.javaClass.simpleName}" else "done")
                                 from.send(
                                     if (cause != null) Protocol.result(id, null, cause.message ?: cause.javaClass.simpleName)
                                     else Protocol.result(id, if (value == Unit) null else value)
@@ -362,6 +367,7 @@ object Link {
                         break
                     }
                 }
+                Actions.record(method, reply.optString("error").takeIf { it.isNotEmpty() }?.let { "failed: $it" } ?: "done")
                 from.send(reply)
             }
         }
